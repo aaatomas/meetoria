@@ -1,0 +1,153 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: meetoria-postgres
+    environment:
+      POSTGRES_USER: meetoria
+      POSTGRES_PASSWORD: meetoria
+      POSTGRES_DB: meetoria
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meetoria"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: meetoria-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: meetoria-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: meetoria
+      RABBITMQ_DEFAULT_PASS: meetoria
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: meetoria-keycloak
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: meetoria
+      KC_DB_PASSWORD: meetoria
+      KC_HOSTNAME: localhost
+      KC_HTTP_PORT: 8080
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infrastructure/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: meetoria-backend
+    environment:
+      APP_ENV: development
+      APP_PORT: 8081
+      DATABASE_URL: postgres://meetoria:meetoria@postgres:5432/meetoria?sslmode=disable
+      REDIS_URL: redis://redis:6379/0
+      RABBITMQ_URL: amqp://meetoria:meetoria@rabbitmq:5672/
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: meetoria
+      KEYCLOAK_CLIENT_ID: meetoria-api
+      KEYCLOAK_CLIENT_SECRET: meetoria-api-secret
+      JWT_ISSUER: http://localhost:8080/realms/meetoria
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "8081:8081"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+
+  sms-worker:
+    build:
+      context: ./workers/sms-worker
+      dockerfile: Dockerfile
+    container_name: meetoria-sms-worker
+    environment:
+      APP_ENV: development
+      RABBITMQ_URL: amqp://meetoria:meetoria@rabbitmq:5672/
+      DATABASE_URL: postgres://meetoria:meetoria@postgres:5432/meetoria_sms?sslmode=disable
+      SMS_PROVIDER: mock
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  email-worker:
+    build:
+      context: ./workers/email-worker
+      dockerfile: Dockerfile
+    container_name: meetoria-email-worker
+    environment:
+      APP_ENV: development
+      RABBITMQ_URL: amqp://meetoria:meetoria@rabbitmq:5672/
+      DATABASE_URL: postgres://meetoria:meetoria@postgres:5432/meetoria_email?sslmode=disable
+      EMAIL_PROVIDER: mock
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: meetoria-frontend
+    environment:
+      VITE_API_URL: http://localhost:8081
+      VITE_KEYCLOAK_URL: http://localhost:8080
+      VITE_KEYCLOAK_REALM: meetoria
+      VITE_KEYCLOAK_CLIENT_ID: meetoria-web
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  uploads_data:

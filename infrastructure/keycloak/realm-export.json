@@ -1,0 +1,75 @@
+{
+  "realm": "meetoria",
+  "enabled": true,
+  "displayName": "Meetoria",
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "sslRequired": "external",
+  "roles": {
+    "realm": [
+      {
+        "name": "platform_admin",
+        "description": "Platform administrator with global access"
+      },
+      {
+        "name": "customer",
+        "description": "Global customer role"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "meetoria-web",
+      "name": "Meetoria Web Application",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost:5173/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://localhost:5173"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocol": "openid-connect"
+    },
+    {
+      "clientId": "meetoria-api",
+      "name": "Meetoria API",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "meetoria-api-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "protocol": "openid-connect"
+    }
+  ],
+  "users": [
+    {
+      "username": "admin@meetoria.com",
+      "email": "admin@meetoria.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Platform",
+      "lastName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["platform_admin"]
+    }
+  ]
+}

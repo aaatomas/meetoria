@@ -1,0 +1,74 @@
+replicaCount: 2
+
+image:
+  repository: meetoria/backend
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8081
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: api.meetoria.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+env:
+  APP_ENV: production
+  APP_PORT: "8081"
+
+postgresql:
+  enabled: true
+  auth:
+    username: meetoria
+    password: changeme
+    database: meetoria
+
+redis:
+  enabled: true
+
+rabbitmq:
+  enabled: true
+  auth:
+    username: meetoria
+    password: changeme
+
+backend:
+  replicaCount: 2
+
+frontend:
+  replicaCount: 2
+  image:
+    repository: meetoria/frontend
+    tag: latest
+
+smsWorker:
+  replicaCount: 1
+  image:
+    repository: meetoria/sms-worker
+    tag: latest
+
+emailWorker:
+  replicaCount: 1
+  image:
+    repository: meetoria/email-worker
+    tag: latest
+
+keycloak:
+  enabled: true
+  image:
+    repository: quay.io/keycloak/keycloak
+    tag: "26.0"

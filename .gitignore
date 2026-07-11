@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Build
+dist/
+build/
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test
+coverage/
+*.out
+coverage.html
+
+# Go
+*.test
+*.prof
+
+# Frontend
+frontend/dist/
+frontend/.vite/
+
+# Docker
+docker/data/
+uploads/
+
+# Temporary
+tmp/
+temp/
+*.tmp
