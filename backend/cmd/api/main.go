@@ -36,6 +36,10 @@ func main() {
 		log.Fatalf("failed to connect to database: %v", err)
 	}
 
+	if err := database.Migrate(db, cfg.MigrationsDir); err != nil {
+		log.Fatalf("failed to run database migrations: %v", err)
+	}
+
 	redis, err := redisclient.New(cfg.RedisURL)
 	if err != nil {
 		log.Fatalf("failed to connect to redis: %v", err)

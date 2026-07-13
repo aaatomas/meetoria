@@ -7,10 +7,11 @@ import (
 )
 
 type Config struct {
-	Env         string
-	Port        string
-	DatabaseURL string
-	RedisURL    string
+	Env           string
+	Port          string
+	DatabaseURL   string
+	MigrationsDir string
+	RedisURL      string
 	RabbitMQURL string
 	UploadDir   string
 	Keycloak    KeycloakConfig
@@ -33,7 +34,8 @@ func Load() *Config {
 	return &Config{
 		Env:         getEnv("APP_ENV", "development"),
 		Port:        getEnv("APP_PORT", "8081"),
-		DatabaseURL: getEnv("DATABASE_URL", "postgres://meetoria:meetoria@localhost:5432/meetoria?sslmode=disable"),
+		DatabaseURL:   getEnv("DATABASE_URL", "postgres://meetoria:meetoria@localhost:5432/meetoria?sslmode=disable"),
+		MigrationsDir: getEnv("MIGRATIONS_DIR", "migrations"),
 		RedisURL:    getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		RabbitMQURL: getEnv("RABBITMQ_URL", "amqp://meetoria:meetoria@localhost:5672/"),
 		UploadDir:   getEnv("UPLOAD_DIR", "./uploads"),

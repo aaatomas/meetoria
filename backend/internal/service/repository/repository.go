@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/meetoria/meetoria/backend/internal/employee"
 	"github.com/meetoria/meetoria/backend/internal/service"
 )
 
@@ -15,6 +16,8 @@ type Repository interface {
 	Update(ctx context.Context, s *service.Service) error
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
 	List(ctx context.Context, orgID uuid.UUID, offset, limit int, activeOnly bool) ([]service.Service, int64, error)
+	UpdateCurrencyByOrg(ctx context.Context, orgID uuid.UUID, currency string) error
+	DeleteEmployeeServiceLinks(ctx context.Context, orgID, serviceID uuid.UUID) error
 }
 
 type gormRepository struct {
@@ -65,4 +68,14 @@ func (r *gormRepository) List(ctx context.Context, orgID uuid.UUID, offset, limi
 
 	err := query.Order("name ASC").Offset(offset).Limit(limit).Find(&services).Error
 	return services, total, err
+}
+
+func (r *gormRepository) UpdateCurrencyByOrg(ctx context.Context, orgID uuid.UUID, currency string) error {
+	return r.scoped(ctx, orgID).Model(&service.Service{}).Update("currency", currency).Error
+}
+
+func (r *gormRepository) DeleteEmployeeServiceLinks(ctx context.Context, orgID, serviceID uuid.UUID) error {
+	return r.db.WithContext(ctx).
+		Where("organization_id = ? AND service_id = ?", orgID, serviceID).
+		Delete(&employee.EmployeeService{}).Error
 }

@@ -52,6 +52,7 @@ export type EditBookingForm = z.infer<typeof editBookingSchema>;
 
 interface BookingEventDialogProps {
   orgId: string;
+  currency: string;
   open: boolean;
   booking: Booking | null;
   customers: Customer[];
@@ -101,6 +102,7 @@ function isBookingLocked(status: string): boolean {
 
 export function BookingEventDialog({
   orgId,
+  currency,
   open,
   booking,
   customers,
@@ -203,7 +205,7 @@ export function BookingEventDialog({
     ? `${selectedCustomer.first_name} ${selectedCustomer.last_name}`.trim()
     : 'Customer';
   const displayPrice = selectedService
-    ? { currency: selectedService.currency, price: selectedService.price }
+    ? { currency, price: selectedService.price }
     : booking
       ? { currency: booking.currency, price: booking.price }
       : null;

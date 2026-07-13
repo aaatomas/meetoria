@@ -4,6 +4,48 @@ import { TimePicker } from '@mui/x-date-pickers/TimePicker';
 import type { Dayjs } from 'dayjs';
 import { mergeDatePart, mergeTimePart } from '../../utils/dateTimeFieldUtils';
 
+const datePickerSlotProps = {
+  textField: {
+    fullWidth: true,
+    size: 'small' as const,
+  },
+};
+
+interface BookingDateFieldProps {
+  value: Dayjs | null;
+  onChange: (value: Dayjs | null) => void;
+  label?: string;
+  error?: string;
+  disabled?: boolean;
+  minDate?: Dayjs;
+}
+
+export function BookingDateField({
+  value,
+  onChange,
+  label = 'Date',
+  error,
+  disabled = false,
+  minDate,
+}: BookingDateFieldProps) {
+  return (
+    <DatePicker
+      label={label}
+      value={value}
+      disabled={disabled}
+      minDate={minDate}
+      onChange={onChange}
+      slotProps={{
+        textField: {
+          ...datePickerSlotProps.textField,
+          error: !!error,
+          helperText: error,
+        },
+      }}
+    />
+  );
+}
+
 interface BookingDateTimeFieldsProps {
   value: Dayjs | null;
   onChange: (value: Dayjs | null) => void;
@@ -30,8 +72,7 @@ export function BookingDateTimeFields({
         onChange={(nextDate) => onChange(mergeDatePart(value, nextDate))}
         slotProps={{
           textField: {
-            fullWidth: true,
-            size: 'small',
+            ...datePickerSlotProps.textField,
             error: !!error,
           },
         }}

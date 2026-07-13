@@ -12,8 +12,8 @@ type WorkingHours struct {
 	commonmodel.OrganizationScoped
 	EmployeeID *uuid.UUID `gorm:"type:uuid;index" json:"employee_id,omitempty"`
 	DayOfWeek  int        `gorm:"not null" json:"day_of_week"`
-	StartTime  time.Time  `gorm:"type:time;not null" json:"start_time"`
-	EndTime    time.Time  `gorm:"type:time;not null" json:"end_time"`
+	StartTime  ClockTime  `gorm:"type:time;not null" json:"start_time"`
+	EndTime    ClockTime  `gorm:"type:time;not null" json:"end_time"`
 	IsActive   bool       `gorm:"not null;default:true" json:"is_active"`
 }
 
@@ -21,8 +21,8 @@ type Break struct {
 	commonmodel.OrganizationScoped
 	EmployeeID *uuid.UUID `gorm:"type:uuid;index" json:"employee_id,omitempty"`
 	DayOfWeek  int        `gorm:"not null" json:"day_of_week"`
-	StartTime  time.Time  `gorm:"type:time;not null" json:"start_time"`
-	EndTime    time.Time  `gorm:"type:time;not null" json:"end_time"`
+	StartTime  ClockTime  `gorm:"type:time;not null" json:"start_time"`
+	EndTime    ClockTime  `gorm:"type:time;not null" json:"end_time"`
 }
 
 type Holiday struct {
@@ -34,13 +34,13 @@ type Holiday struct {
 }
 
 type SetWorkingHoursRequest struct {
-	EmployeeID *uuid.UUID       `json:"employee_id"`
-	Schedule   []DaySchedule    `json:"schedule" binding:"required,dive"`
+	EmployeeID *uuid.UUID    `json:"employee_id"`
+	Schedule   []DaySchedule `json:"schedule" binding:"required"`
 }
 
 type DaySchedule struct {
 	DayOfWeek int         `json:"day_of_week" binding:"min=0,max=6"`
-	Slots     []TimeRange `json:"slots" binding:"required,dive"`
+	Slots     []TimeRange `json:"slots"`
 }
 
 type TimeRange struct {

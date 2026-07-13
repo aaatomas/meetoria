@@ -8,6 +8,7 @@ import { CustomersPage } from './pages/CustomersPage';
 import { EmployeesPage } from './pages/EmployeesPage';
 import { ServicesPage } from './pages/ServicesPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { PublicBookingPage } from './pages/PublicBookingPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, login } = useAuth();
@@ -23,6 +24,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
+      <Route path="/book/:slug" element={<PublicBookingPage />} />
       <Route
         element={
           <ProtectedRoute>

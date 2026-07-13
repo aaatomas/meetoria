@@ -52,6 +52,20 @@ export function mergeDatePart(current: Dayjs | null, nextDate: Dayjs | null): Da
   return base.year(nextDate.year()).month(nextDate.month()).date(nextDate.date());
 }
 
+export type TimeFormat = '24h' | '12h';
+
+export function timePickerProps(timeFormat: TimeFormat = '24h') {
+  const use12Hour = timeFormat === '12h';
+  return {
+    ampm: use12Hour,
+    format: use12Hour ? 'hh:mm a' : 'HH:mm',
+  } as const;
+}
+
+export function formatTimeForStorage(time: Dayjs): string {
+  return time.format('HH:mm');
+}
+
 export function mergeTimePart(current: Dayjs | null, nextTime: Dayjs | null): Dayjs | null {
   if (!nextTime) {
     return null;

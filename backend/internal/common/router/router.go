@@ -34,6 +34,8 @@ import (
 	servicerepo "github.com/meetoria/meetoria/backend/internal/service/repository"
 	notifservice "github.com/meetoria/meetoria/backend/internal/notification/service"
 	notifrepo "github.com/meetoria/meetoria/backend/internal/notification/repository"
+	schedulehandler "github.com/meetoria/meetoria/backend/internal/schedule/handler"
+	scheduleservice "github.com/meetoria/meetoria/backend/internal/schedule/service"
 	schedulerepo "github.com/meetoria/meetoria/backend/internal/schedule/repository"
 	userhandler "github.com/meetoria/meetoria/backend/internal/user/handler"
 	userservice "github.com/meetoria/meetoria/backend/internal/user/service"
@@ -82,24 +84,25 @@ func Setup(deps Dependencies) *gin.Engine {
 	userSvc := userservice.NewService(userRepo)
 
 	orgRepo := orgrepo.NewRepository(deps.DB)
-	orgSvc := orgservice.NewService(orgRepo)
+	scheduleRepo := schedulerepo.NewRepository(deps.DB)
+	scheduleSvc := scheduleservice.NewService(scheduleRepo)
+	serviceRepo := servicerepo.NewRepository(deps.DB)
+	orgSvc := orgservice.NewService(orgRepo, scheduleSvc, serviceRepo)
 
 	customerRepo := customerrepo.NewRepository(deps.DB)
 	employeeRepo := employeerepo.NewRepository(deps.DB)
-	employeeSvc := employeeservice.NewService(employeeRepo, fileStorage)
+	bookingRepo := bookingrepo.NewRepository(deps.DB)
+	employeeSvc := employeeservice.NewService(employeeRepo, bookingRepo, fileStorage)
 
-	serviceRepo := servicerepo.NewRepository(deps.DB)
-	serviceSvc := serviceservice.NewService(serviceRepo)
+	serviceSvc := serviceservice.NewService(serviceRepo, bookingRepo)
 
-	scheduleRepo := schedulerepo.NewRepository(deps.DB)
 	notifRepo := notifrepo.NewRepository(deps.DB)
 	notifSvc := notifservice.NewService(notifRepo, customerRepo, employeeRepo, deps.Publisher)
 
-	bookingRepo := bookingrepo.NewRepository(deps.DB)
 	customerSvc := customerservice.NewService(customerRepo, bookingRepo, notifSvc)
 	bookingSvc := bookingservice.NewService(
 		bookingRepo, customerRepo, employeeRepo, serviceRepo,
-		scheduleRepo, deps.Redis, deps.Publisher, notifSvc,
+		scheduleRepo, orgRepo, deps.Redis, deps.Publisher, notifSvc,
 	)
 
 	analyticsRepo := analyticrepo.NewRepository(deps.DB)
@@ -111,7 +114,18 @@ func Setup(deps Dependencies) *gin.Engine {
 	employeeHandler := employeehandler.NewHandler(employeeSvc, orgSvc, userSvc, fileStorage)
 	serviceHandler := servicehandler.NewHandler(serviceSvc, orgSvc, userSvc)
 	bookingHandler := bookinghandler.NewHandler(bookingSvc, orgSvc, userSvc)
+	publicBookingHandler := bookinghandler.NewPublicHandler(bookingSvc, orgSvc, serviceRepo, employeeRepo)
+	scheduleHandler := schedulehandler.NewHandler(scheduleSvc, orgSvc, userSvc)
 	analyticsHandler := handler.NewHandler(analyticsSvc, orgSvc, userSvc)
+
+	public := r.Group("/api/v1/public/:slug")
+	{
+		public.GET("", publicBookingHandler.GetOrganization)
+		public.GET("/services", publicBookingHandler.ListServices)
+		public.GET("/employees", publicBookingHandler.ListEmployees)
+		public.GET("/availability", publicBookingHandler.GetAvailability)
+		public.POST("/bookings", publicBookingHandler.CreateBooking)
+	}
 
 	api := r.Group("/api/v1")
 	api.Use(middleware.JWTAuth(validator))
@@ -132,6 +146,7 @@ func Setup(deps Dependencies) *gin.Engine {
 		orgRoutes.GET("/customers", customerHandler.List)
 		orgRoutes.POST("/customers", customerHandler.Create)
 		orgRoutes.GET("/customers/:customer_id", customerHandler.Get)
+		orgRoutes.GET("/customers/:customer_id/deletion-check", customerHandler.CheckDeletion)
 		orgRoutes.PUT("/customers/:customer_id", customerHandler.Update)
 		orgRoutes.DELETE("/customers/:customer_id", customerHandler.Delete)
 		orgRoutes.POST("/customers/:customer_id/notifications/sms", customerHandler.SendSMS)
@@ -140,6 +155,7 @@ func Setup(deps Dependencies) *gin.Engine {
 		orgRoutes.GET("/employees", employeeHandler.List)
 		orgRoutes.POST("/employees", employeeHandler.Create)
 		orgRoutes.GET("/employees/:employee_id", employeeHandler.Get)
+		orgRoutes.GET("/employees/:employee_id/deletion-check", employeeHandler.CheckDeletion)
 		orgRoutes.PUT("/employees/:employee_id", employeeHandler.Update)
 		orgRoutes.POST("/employees/:employee_id/avatar", employeeHandler.UploadAvatar)
 		orgRoutes.DELETE("/employees/:employee_id", employeeHandler.Delete)
@@ -147,8 +163,12 @@ func Setup(deps Dependencies) *gin.Engine {
 		orgRoutes.GET("/services", serviceHandler.List)
 		orgRoutes.POST("/services", serviceHandler.Create)
 		orgRoutes.GET("/services/:service_id", serviceHandler.Get)
+		orgRoutes.GET("/services/:service_id/deletion-check", serviceHandler.CheckDeletion)
 		orgRoutes.PUT("/services/:service_id", serviceHandler.Update)
 		orgRoutes.DELETE("/services/:service_id", serviceHandler.Delete)
+
+		orgRoutes.GET("/schedule/working-hours", scheduleHandler.GetWorkingHours)
+		orgRoutes.PUT("/schedule/working-hours", scheduleHandler.SetWorkingHours)
 
 		orgRoutes.GET("/bookings", bookingHandler.List)
 		orgRoutes.POST("/bookings", bookingHandler.Create)

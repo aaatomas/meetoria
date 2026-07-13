@@ -2,12 +2,13 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { Box, CircularProgress, Typography } from '@mui/material';
 import { EventCalendar } from '@mui/x-scheduler/event-calendar';
 import type { SchedulerEvent } from '@mui/x-scheduler/models';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, Booking, Customer, Employee, Service, getApiErrorMessage } from '../../api/client';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, Booking, Customer, Employee, Service, getApiErrorMessage, getWorkingHours } from '../../api/client';
 import {
   buildSchedulerEvents,
   buildSchedulerResources,
   findScheduleChanges,
+  getSchedulerHourRange,
   MeetoriaSchedulerEvent,
 } from './bookingSchedulerUtils';
 import { useSchedulerResourceAvatars } from './useSchedulerResourceAvatars';
@@ -20,13 +21,10 @@ import { useSchedulerEventClick } from './useSchedulerEventClick';
 import { BookingEventDialog, EditBookingForm } from './BookingEventDialog';
 import { bookingSchedulerLocaleText } from './bookingSchedulerLocale';
 
-const defaultSchedulerPreferences = {
-  ampm: false,
-  isSidePanelOpen: false,
-} as const;
-
 interface BookingSchedulerProps {
   orgId: string;
+  currency: string;
+  timeFormat?: '24h' | '12h';
   bookings: Booking[];
   customers: Customer[];
   employees: Employee[];
@@ -36,6 +34,8 @@ interface BookingSchedulerProps {
 
 export function BookingScheduler({
   orgId,
+  currency,
+  timeFormat = '24h',
   bookings,
   customers,
   employees,
@@ -46,6 +46,28 @@ export function BookingScheduler({
   const schedulerRef = useRef<HTMLDivElement>(null);
   const bookingsRef = useRef(bookings);
   bookingsRef.current = bookings;
+
+  const { data: workingHoursSchedule } = useQuery({
+    queryKey: ['working-hours', orgId],
+    queryFn: () => getWorkingHours(orgId),
+    enabled: !!orgId,
+  });
+
+  const schedulerPreferences = useMemo(
+    () => ({
+      ampm: timeFormat === '12h',
+      isSidePanelOpen: false,
+    }),
+    [timeFormat],
+  );
+
+  const viewConfig = useMemo(() => {
+    const range = getSchedulerHourRange(workingHoursSchedule, bookings);
+    return {
+      week: range,
+      day: range,
+    };
+  }, [workingHoursSchedule, bookings]);
 
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
@@ -212,13 +234,10 @@ export function BookingScheduler({
             onVisibleResourcesChange={handleVisibleResourcesChange}
             onEventsChange={handleEventsChange}
             localeText={bookingSchedulerLocaleText}
-            defaultPreferences={defaultSchedulerPreferences}
+            defaultPreferences={schedulerPreferences}
             views={['week', 'day', 'month', 'agenda']}
             defaultView="week"
-            viewConfig={{
-              week: { startTime: 8, endTime: 20 },
-              day: { startTime: 8, endTime: 20 },
-            }}
+            viewConfig={viewConfig}
             eventCreation={false}
             areEventsDraggable
             areEventsResizable={false}
@@ -230,6 +249,7 @@ export function BookingScheduler({
 
       <BookingEventDialog
         orgId={orgId}
+        currency={currency}
         open={selectedBookingId !== null}
         booking={selectedBooking}
         customers={customers}

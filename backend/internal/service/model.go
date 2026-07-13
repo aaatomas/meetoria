@@ -21,7 +21,6 @@ type CreateServiceRequest struct {
 	Description     string  `json:"description"`
 	DurationMinutes int     `json:"duration_minutes" binding:"required,min=5,max=480"`
 	Price           float64 `json:"price" binding:"min=0"`
-	Currency        string  `json:"currency" binding:"required,len=3"`
 	Category        string  `json:"category"`
 	Color           string  `json:"color"`
 }

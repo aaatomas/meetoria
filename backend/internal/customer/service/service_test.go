@@ -33,6 +33,14 @@ func (m *mockCustomerRepo) GetByID(ctx context.Context, orgID, id uuid.UUID) (*c
 	return args.Get(0).(*customer.Customer), args.Error(1)
 }
 
+func (m *mockCustomerRepo) FindByPhoneOrEmail(ctx context.Context, orgID uuid.UUID, phone, email string) (*customer.Customer, error) {
+	args := m.Called(ctx, orgID, phone, email)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*customer.Customer), args.Error(1)
+}
+
 func (m *mockCustomerRepo) Update(ctx context.Context, c *customer.Customer) error {
 	args := m.Called(ctx, c)
 	return args.Error(0)

@@ -51,9 +51,87 @@ export interface Organization {
   name: string;
   slug: string;
   timezone: string;
+  currency: string;
   email?: string;
   phone?: string;
   is_active: boolean;
+  settings?: string;
+}
+
+export interface BookingSettings {
+  enabled: boolean;
+  booking_window_days: number;
+  min_notice_minutes: number;
+  max_notice_minutes?: number;
+  email_required: boolean;
+  auto_confirm: boolean;
+  manual_approval: boolean;
+  cancellation_policy?: string;
+  rescheduling_policy?: string;
+}
+
+export function parseOrganizationSettings(settings?: string): {
+  booking: BookingSettings;
+  time_format: '24h' | '12h';
+} {
+  const defaults: BookingSettings = {
+    enabled: true,
+    booking_window_days: 30,
+    min_notice_minutes: 60,
+    email_required: false,
+    auto_confirm: true,
+    manual_approval: false,
+  };
+  if (!settings || settings === '{}') {
+    return { booking: defaults, time_format: '24h' };
+  }
+  try {
+    const parsed = JSON.parse(settings) as {
+      booking?: Partial<BookingSettings>;
+      time_format?: string;
+    };
+    const booking = { ...defaults, ...parsed.booking };
+    if (booking.max_notice_minutes != null && booking.max_notice_minutes <= 0) {
+      delete booking.max_notice_minutes;
+    }
+    const time_format = parsed.time_format === '12h' ? '12h' : '24h';
+    return { booking, time_format };
+  } catch {
+    return { booking: defaults, time_format: '24h' };
+  }
+}
+
+export interface DaySchedule {
+  day_of_week: number;
+  slots: Array<{ start_time: string; end_time: string }>;
+}
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+export function dayName(dayOfWeek: number): string {
+  return DAY_NAMES[dayOfWeek] ?? `Day ${dayOfWeek}`;
+}
+
+export function defaultWeekSchedule(): DaySchedule[] {
+  return Array.from({ length: 7 }, (_, day) => ({
+    day_of_week: day,
+    slots: day >= 1 && day <= 5 ? [{ start_time: '09:00', end_time: '17:00' }] : [],
+  }));
+}
+
+export async function getWorkingHours(orgId: string): Promise<DaySchedule[]> {
+  const { data } = await api.get<{ schedule: DaySchedule[] }>(`/organizations/${orgId}/schedule/working-hours`);
+  const schedule = data.schedule ?? [];
+  if (schedule.length === 0) return defaultWeekSchedule();
+  const byDay = new Map(schedule.map((d) => [d.day_of_week, d]));
+  return Array.from({ length: 7 }, (_, day) => byDay.get(day) ?? { day_of_week: day, slots: [] });
+}
+
+export async function saveWorkingHours(orgId: string, schedule: DaySchedule[]): Promise<DaySchedule[]> {
+  const { data } = await api.put<{ schedule: DaySchedule[] }>(`/organizations/${orgId}/schedule/working-hours`, {
+    schedule,
+  });
+  return data.schedule;
 }
 
 export interface Customer {
@@ -96,6 +174,66 @@ export async function uploadEmployeeAvatar(orgId: string, employeeId: string, fi
   formData.append('avatar', file);
   const { data } = await api.post<Employee>(`/organizations/${orgId}/employees/${employeeId}/avatar`, formData);
   return data;
+}
+
+export interface DeletionCheck {
+  can_delete: boolean;
+  bookings_count: number;
+  message?: string;
+}
+
+export async function checkServiceDeletion(orgId: string, serviceId: string): Promise<DeletionCheck> {
+  const { data } = await api.get<DeletionCheck>(`/organizations/${orgId}/services/${serviceId}/deletion-check`);
+  return data;
+}
+
+export async function checkEmployeeDeletion(orgId: string, employeeId: string): Promise<DeletionCheck> {
+  const { data } = await api.get<DeletionCheck>(`/organizations/${orgId}/employees/${employeeId}/deletion-check`);
+  return data;
+}
+
+export async function checkCustomerDeletion(orgId: string, customerId: string): Promise<DeletionCheck> {
+  const { data } = await api.get<DeletionCheck>(`/organizations/${orgId}/customers/${customerId}/deletion-check`);
+  return data;
+}
+
+export async function updateService(
+  orgId: string,
+  serviceId: string,
+  data: Partial<Pick<Service, 'name' | 'description' | 'duration_minutes' | 'price' | 'is_active'>>,
+): Promise<Service> {
+  const { data: result } = await api.put<Service>(`/organizations/${orgId}/services/${serviceId}`, data);
+  return result;
+}
+
+export async function deleteService(orgId: string, serviceId: string): Promise<void> {
+  await api.delete(`/organizations/${orgId}/services/${serviceId}`);
+}
+
+export async function updateEmployee(
+  orgId: string,
+  employeeId: string,
+  data: Partial<Pick<Employee, 'first_name' | 'last_name' | 'email' | 'phone' | 'title' | 'bio' | 'is_active'>>,
+): Promise<Employee> {
+  const { data: result } = await api.put<Employee>(`/organizations/${orgId}/employees/${employeeId}`, data);
+  return result;
+}
+
+export async function deleteEmployee(orgId: string, employeeId: string): Promise<void> {
+  await api.delete(`/organizations/${orgId}/employees/${employeeId}`);
+}
+
+export async function updateCustomer(
+  orgId: string,
+  customerId: string,
+  data: Partial<Pick<Customer, 'first_name' | 'last_name' | 'email' | 'phone' | 'notes'>>,
+): Promise<Customer> {
+  const { data: result } = await api.put<Customer>(`/organizations/${orgId}/customers/${customerId}`, data);
+  return result;
+}
+
+export async function deleteCustomer(orgId: string, customerId: string): Promise<void> {
+  await api.delete(`/organizations/${orgId}/customers/${customerId}`);
 }
 
 export async function sendCustomerSms(orgId: string, customerId: string): Promise<void> {

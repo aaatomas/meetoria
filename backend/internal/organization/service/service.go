@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"regexp"
+	"strings"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -11,41 +14,72 @@ import (
 	commonmodel "github.com/meetoria/meetoria/backend/internal/common/model"
 	"github.com/meetoria/meetoria/backend/internal/organization"
 	"github.com/meetoria/meetoria/backend/internal/organization/repository"
+	scheduleservice "github.com/meetoria/meetoria/backend/internal/schedule/service"
+	servicerepo "github.com/meetoria/meetoria/backend/internal/service/repository"
 )
+
+var slugPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 type Service interface {
 	Create(ctx context.Context, req organization.CreateOrganizationRequest, ownerUserID uuid.UUID) (*organization.Organization, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*organization.Organization, error)
+	GetBySlug(ctx context.Context, slug string) (*organization.Organization, error)
 	Update(ctx context.Context, id uuid.UUID, req organization.UpdateOrganizationRequest) (*organization.Organization, error)
 	List(ctx context.Context, userID uuid.UUID, params commonmodel.PaginationParams) (commonmodel.PaginatedResponse[organization.Organization], error)
 	VerifyMembership(ctx context.Context, orgID, userID uuid.UUID, allowedRoles ...organization.OrganizationRole) error
 }
 
 type organizationService struct {
-	repo repository.Repository
+	repo            repository.Repository
+	scheduleService scheduleservice.Service
+	serviceRepo     servicerepo.Repository
 }
 
-func NewService(repo repository.Repository) Service {
-	return &organizationService{repo: repo}
+func NewService(repo repository.Repository, scheduleService scheduleservice.Service, serviceRepo servicerepo.Repository) Service {
+	return &organizationService{repo: repo, scheduleService: scheduleService, serviceRepo: serviceRepo}
 }
 
 func (s *organizationService) Create(ctx context.Context, req organization.CreateOrganizationRequest, ownerUserID uuid.UUID) (*organization.Organization, error) {
-	existing, err := s.repo.GetBySlug(ctx, req.Slug)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, apperrors.Internal("failed to check slug", err)
+	slug := strings.ToLower(strings.TrimSpace(req.Slug))
+	if slug == "" {
+		var err error
+		slug, err = s.generateUniqueSlug(ctx, req.Name)
+		if err != nil {
+			return nil, err
+		}
+	} else if !slugPattern.MatchString(slug) {
+		return nil, apperrors.Validation("slug must contain only lowercase letters, numbers, and hyphens")
+	} else {
+		existing, err := s.repo.GetBySlug(ctx, slug)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperrors.Internal("failed to check slug", err)
+		}
+		if existing != nil {
+			return nil, apperrors.Conflict("organization slug already exists")
+		}
 	}
-	if existing != nil {
-		return nil, apperrors.Conflict("organization slug already exists")
+
+	timezone := strings.TrimSpace(req.Timezone)
+	if timezone == "" {
+		timezone = organization.DefaultTimezone
+	}
+
+	currency := req.Currency
+	if currency == "" {
+		currency = organization.DefaultCurrency
 	}
 
 	org := &organization.Organization{
 		Name:     req.Name,
-		Slug:     req.Slug,
-		Timezone: req.Timezone,
+		Slug:     slug,
+		Timezone: timezone,
+		Currency: organization.NormalizeCurrency(currency),
 		Email:    req.Email,
 		Phone:    req.Phone,
 		IsActive: true,
 	}
+	defaultSettings, _ := organization.MarshalSettings(organization.DefaultOrganizationSettings())
+	org.Settings = defaultSettings
 
 	if err := s.repo.Create(ctx, org); err != nil {
 		return nil, apperrors.Internal("failed to create organization", err)
@@ -61,7 +95,37 @@ func (s *organizationService) Create(ctx context.Context, req organization.Creat
 		return nil, apperrors.Internal("failed to add organization owner", err)
 	}
 
+	if s.scheduleService != nil {
+		if err := s.scheduleService.SeedDefaultHours(ctx, org.ID); err != nil {
+			return nil, apperrors.Internal("failed to seed default working hours", err)
+		}
+	}
+
 	return org, nil
+}
+
+func (s *organizationService) generateUniqueSlug(ctx context.Context, name string) (string, error) {
+	base := organization.Slugify(name)
+	if len(base) < 2 {
+		base = "organization"
+	}
+
+	for i := 0; i < 100; i++ {
+		slug := base
+		if i > 0 {
+			slug = fmt.Sprintf("%s-%d", base, i+1)
+		}
+
+		existing, err := s.repo.GetBySlug(ctx, slug)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", apperrors.Internal("failed to check slug", err)
+		}
+		if existing == nil {
+			return slug, nil
+		}
+	}
+
+	return "", apperrors.Internal("failed to generate unique slug", nil)
 }
 
 func (s *organizationService) GetByID(ctx context.Context, id uuid.UUID) (*organization.Organization, error) {
@@ -72,6 +136,22 @@ func (s *organizationService) GetByID(ctx context.Context, id uuid.UUID) (*organ
 		}
 		return nil, apperrors.Internal("failed to get organization", err)
 	}
+	org.Currency = organization.NormalizeCurrency(org.Currency)
+	return org, nil
+}
+
+func (s *organizationService) GetBySlug(ctx context.Context, slug string) (*organization.Organization, error) {
+	org, err := s.repo.GetBySlug(ctx, slug)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperrors.NotFound("organization not found")
+		}
+		return nil, apperrors.Internal("failed to get organization", err)
+	}
+	if !org.IsActive {
+		return nil, apperrors.NotFound("organization not found")
+	}
+	org.Currency = organization.NormalizeCurrency(org.Currency)
 	return org, nil
 }
 
@@ -84,8 +164,27 @@ func (s *organizationService) Update(ctx context.Context, id uuid.UUID, req orga
 	if req.Name != nil {
 		org.Name = *req.Name
 	}
+	if req.Slug != nil {
+		slug := strings.ToLower(strings.TrimSpace(*req.Slug))
+		if !slugPattern.MatchString(slug) {
+			return nil, apperrors.Validation("slug must contain only lowercase letters, numbers, and hyphens")
+		}
+		if slug != org.Slug {
+			existing, err := s.repo.GetBySlug(ctx, slug)
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, apperrors.Internal("failed to check slug", err)
+			}
+			if existing != nil {
+				return nil, apperrors.Conflict("organization slug already exists")
+			}
+			org.Slug = slug
+		}
+	}
 	if req.Timezone != nil {
 		org.Timezone = *req.Timezone
+	}
+	if req.Currency != nil {
+		org.Currency = organization.NormalizeCurrency(*req.Currency)
 	}
 	if req.Email != nil {
 		org.Email = *req.Email
@@ -99,9 +198,31 @@ func (s *organizationService) Update(ctx context.Context, id uuid.UUID, req orga
 	if req.LogoURL != nil {
 		org.LogoURL = *req.LogoURL
 	}
+	settingsChanged := false
+	settings := organization.ParseSettings(org.Settings)
+	if req.TimeFormat != nil {
+		settings.TimeFormat = organization.NormalizeTimeFormat(*req.TimeFormat)
+		settingsChanged = true
+	}
+	if req.Booking != nil {
+		settings.Booking = req.Booking.WithDefaults()
+		settingsChanged = true
+	}
+	if settingsChanged {
+		marshaled, err := organization.MarshalSettings(settings)
+		if err != nil {
+			return nil, apperrors.Internal("failed to marshal organization settings", err)
+		}
+		org.Settings = marshaled
+	}
 
 	if err := s.repo.Update(ctx, org); err != nil {
 		return nil, apperrors.Internal("failed to update organization", err)
+	}
+	if req.Currency != nil && s.serviceRepo != nil {
+		if err := s.serviceRepo.UpdateCurrencyByOrg(ctx, id, org.Currency); err != nil {
+			return nil, apperrors.Internal("failed to update service currencies", err)
+		}
 	}
 	return org, nil
 }

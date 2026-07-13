@@ -16,8 +16,10 @@ type Repository interface {
 	Update(ctx context.Context, e *employee.Employee) error
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
 	List(ctx context.Context, orgID uuid.UUID, offset, limit int, activeOnly bool) ([]employee.Employee, int64, error)
+	ListByService(ctx context.Context, orgID, serviceID uuid.UUID) ([]employee.Employee, error)
 	SetServices(ctx context.Context, orgID, employeeID uuid.UUID, serviceIDs []uuid.UUID) error
 	GetServiceIDs(ctx context.Context, orgID, employeeID uuid.UUID) ([]uuid.UUID, error)
+	DeleteEmployeeServiceLinks(ctx context.Context, orgID, employeeID uuid.UUID) error
 }
 
 type gormRepository struct {
@@ -70,6 +72,17 @@ func (r *gormRepository) List(ctx context.Context, orgID uuid.UUID, offset, limi
 	return employees, total, err
 }
 
+func (r *gormRepository) ListByService(ctx context.Context, orgID, serviceID uuid.UUID) ([]employee.Employee, error) {
+	var employees []employee.Employee
+	err := r.db.WithContext(ctx).
+		Model(&employee.Employee{}).
+		Joins("JOIN employee_services es ON es.employee_id = employees.id AND es.organization_id = employees.organization_id").
+		Where("employees.organization_id = ? AND es.service_id = ? AND employees.is_active = true", orgID, serviceID).
+		Order("employees.first_name ASC").
+		Find(&employees).Error
+	return employees, err
+}
+
 func (r *gormRepository) SetServices(ctx context.Context, orgID, employeeID uuid.UUID, serviceIDs []uuid.UUID) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("organization_id = ? AND employee_id = ?", orgID, employeeID).
@@ -97,4 +110,10 @@ func (r *gormRepository) GetServiceIDs(ctx context.Context, orgID, employeeID uu
 		Where("organization_id = ? AND employee_id = ?", orgID, employeeID).
 		Pluck("service_id", &ids).Error
 	return ids, err
+}
+
+func (r *gormRepository) DeleteEmployeeServiceLinks(ctx context.Context, orgID, employeeID uuid.UUID) error {
+	return r.db.WithContext(ctx).
+		Where("organization_id = ? AND employee_id = ?", orgID, employeeID).
+		Delete(&employee.EmployeeService{}).Error
 }

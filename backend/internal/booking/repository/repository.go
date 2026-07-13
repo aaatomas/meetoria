@@ -18,6 +18,9 @@ type Repository interface {
 	HasOverlap(ctx context.Context, tx *gorm.DB, orgID, employeeID uuid.UUID, start, end time.Time, excludeID *uuid.UUID) (bool, error)
 	GetByEmployeeAndDate(ctx context.Context, orgID, employeeID uuid.UUID, date time.Time) ([]booking.Booking, error)
 	GetNextUpcomingByCustomer(ctx context.Context, orgID, customerID uuid.UUID) (*booking.Booking, error)
+	CountByServiceID(ctx context.Context, orgID, serviceID uuid.UUID) (int64, error)
+	CountByEmployeeID(ctx context.Context, orgID, employeeID uuid.UUID) (int64, error)
+	CountByCustomerID(ctx context.Context, orgID, customerID uuid.UUID) (int64, error)
 	WithTransaction(ctx context.Context, fn func(tx *gorm.DB) error) error
 }
 
@@ -140,4 +143,28 @@ func (r *gormRepository) GetNextUpcomingByCustomer(ctx context.Context, orgID, c
 		return nil, err
 	}
 	return &b, nil
+}
+
+func (r *gormRepository) CountByServiceID(ctx context.Context, orgID, serviceID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.scoped(ctx, orgID).Model(&booking.Booking{}).
+		Where("service_id = ?", serviceID).
+		Count(&count).Error
+	return count, err
+}
+
+func (r *gormRepository) CountByEmployeeID(ctx context.Context, orgID, employeeID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.scoped(ctx, orgID).Model(&booking.Booking{}).
+		Where("employee_id = ?", employeeID).
+		Count(&count).Error
+	return count, err
+}
+
+func (r *gormRepository) CountByCustomerID(ctx context.Context, orgID, customerID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.scoped(ctx, orgID).Model(&booking.Booking{}).
+		Where("customer_id = ?", customerID).
+		Count(&count).Error
+	return count, err
 }

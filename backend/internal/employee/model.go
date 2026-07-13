@@ -51,3 +51,11 @@ type EmployeeService struct {
 func (EmployeeService) TableName() string {
 	return "employee_services"
 }
+
+type PublicEmployee struct {
+	ID        uuid.UUID `json:"id"`
+	FirstName string    `json:"first_name"`
+	LastName  string    `json:"last_name"`
+	Title     string    `json:"title,omitempty"`
+	AvatarURL string    `json:"avatar_url,omitempty"`
+}

@@ -107,6 +107,28 @@ func (h *Handler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (h *Handler) CheckDeletion(c *gin.Context) {
+	orgID, user, err := h.tenantContext(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
+	if err := h.orgService.VerifyMembership(c.Request.Context(), orgID, user.ID); err != nil {
+		c.Error(err)
+		return
+	}
+
+	id, _ := uuid.Parse(c.Param("employee_id"))
+	check, err := h.employeeService.CheckDeletion(c.Request.Context(), orgID, id)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
+	c.JSON(http.StatusOK, check)
+}
+
 func (h *Handler) Delete(c *gin.Context) {
 	orgID, user, err := h.tenantContext(c)
 	if err != nil {

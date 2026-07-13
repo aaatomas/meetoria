@@ -13,6 +13,7 @@ import (
 type Repository interface {
 	SetWorkingHours(ctx context.Context, orgID uuid.UUID, employeeID *uuid.UUID, hours []schedule.WorkingHours) error
 	GetWorkingHours(ctx context.Context, orgID uuid.UUID, employeeID uuid.UUID, dayOfWeek int) ([]schedule.WorkingHours, error)
+	ListOrgWorkingHours(ctx context.Context, orgID uuid.UUID) ([]schedule.WorkingHours, error)
 	GetBreaks(ctx context.Context, orgID uuid.UUID, employeeID uuid.UUID, dayOfWeek int) ([]schedule.Break, error)
 	CreateHoliday(ctx context.Context, h *schedule.Holiday) error
 	ListHolidays(ctx context.Context, orgID uuid.UUID, employeeID *uuid.UUID, from, to time.Time) ([]schedule.Holiday, error)
@@ -62,6 +63,15 @@ func (r *gormRepository) GetWorkingHours(ctx context.Context, orgID uuid.UUID, e
 
 	err = r.db.WithContext(ctx).
 		Where("organization_id = ? AND employee_id IS NULL AND day_of_week = ? AND is_active = true", orgID, dayOfWeek).
+		Find(&hours).Error
+	return hours, err
+}
+
+func (r *gormRepository) ListOrgWorkingHours(ctx context.Context, orgID uuid.UUID) ([]schedule.WorkingHours, error) {
+	var hours []schedule.WorkingHours
+	err := r.db.WithContext(ctx).
+		Where("organization_id = ? AND employee_id IS NULL AND is_active = true", orgID).
+		Order("day_of_week ASC, start_time ASC").
 		Find(&hours).Error
 	return hours, err
 }

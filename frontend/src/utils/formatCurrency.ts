@@ -20,9 +20,15 @@ export function getCurrencySymbol(currency: string): string {
 }
 
 export function formatPrice(amount: number, currency: string): string {
-  return new Intl.NumberFormat(undefined, {
-    style: 'currency',
-    currency: currency.toUpperCase(),
-    currencyDisplay: 'narrowSymbol',
-  }).format(amount);
+  const code = currency?.trim().toUpperCase();
+  const safeCode = code && code.length === 3 ? code : 'EUR';
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: safeCode,
+      currencyDisplay: 'narrowSymbol',
+    }).format(amount);
+  } catch {
+    return `${amount} ${safeCode}`;
+  }
 }

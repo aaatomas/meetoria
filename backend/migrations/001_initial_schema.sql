@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS organizations (
     name VARCHAR(255) NOT NULL,
     slug VARCHAR(100) NOT NULL UNIQUE,
     timezone VARCHAR(50) NOT NULL DEFAULT 'UTC',
+    currency VARCHAR(3) NOT NULL DEFAULT 'EUR',
     email VARCHAR(255),
     phone VARCHAR(20),
     address TEXT,

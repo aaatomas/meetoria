@@ -12,12 +12,17 @@ import (
 	"github.com/meetoria/meetoria/backend/internal/booking"
 	bookingrepo "github.com/meetoria/meetoria/backend/internal/booking/repository"
 	customerrepo "github.com/meetoria/meetoria/backend/internal/customer/repository"
+	"github.com/meetoria/meetoria/backend/internal/customer"
 	employeerepo "github.com/meetoria/meetoria/backend/internal/employee/repository"
 	apperrors "github.com/meetoria/meetoria/backend/internal/common/errors"
 	commonmodel "github.com/meetoria/meetoria/backend/internal/common/model"
 	redisclient "github.com/meetoria/meetoria/backend/internal/common/redis"
 	"github.com/meetoria/meetoria/backend/internal/common/rabbitmq"
 	notifservice "github.com/meetoria/meetoria/backend/internal/notification/service"
+	"github.com/meetoria/meetoria/backend/internal/organization"
+	orgrepo "github.com/meetoria/meetoria/backend/internal/organization/repository"
+	"github.com/meetoria/meetoria/backend/internal/schedule"
+	"github.com/meetoria/meetoria/backend/pkg/phone"
 	servicerepo "github.com/meetoria/meetoria/backend/internal/service/repository"
 	schedulerepo "github.com/meetoria/meetoria/backend/internal/schedule/repository"
 	"github.com/meetoria/meetoria/backend/pkg/events"
@@ -25,11 +30,13 @@ import (
 
 type Service interface {
 	Create(ctx context.Context, orgID uuid.UUID, req booking.CreateBookingRequest, correlationID uuid.UUID) (*booking.Booking, error)
+	CreatePublic(ctx context.Context, org *organization.Organization, req booking.PublicCreateBookingRequest, correlationID uuid.UUID) (*booking.Booking, error)
 	GetByID(ctx context.Context, orgID, id uuid.UUID) (*booking.Booking, error)
 	Update(ctx context.Context, orgID, id uuid.UUID, req booking.UpdateBookingRequest, correlationID uuid.UUID) (*booking.Booking, error)
 	Cancel(ctx context.Context, orgID, id uuid.UUID, req booking.CancelBookingRequest, correlationID uuid.UUID) (*booking.Booking, error)
 	List(ctx context.Context, orgID uuid.UUID, filters bookingrepo.ListFilters, params commonmodel.PaginationParams) (commonmodel.PaginatedResponse[booking.Booking], error)
 	GetAvailability(ctx context.Context, orgID uuid.UUID, req booking.AvailabilityRequest) ([]booking.TimeSlot, error)
+	GetPublicAvailability(ctx context.Context, orgID uuid.UUID, req booking.PublicAvailabilityRequest, minNoticeMinutes int) ([]booking.PublicTimeSlot, error)
 	SendSMS(ctx context.Context, orgID, id uuid.UUID, correlationID uuid.UUID) error
 	SendEmail(ctx context.Context, orgID, id uuid.UUID, correlationID uuid.UUID) error
 }
@@ -40,6 +47,7 @@ type bookingService struct {
 	employeeRepo employeerepo.Repository
 	serviceRepo  servicerepo.Repository
 	scheduleRepo schedulerepo.Repository
+	orgRepo      orgrepo.Repository
 	redis        *redisclient.Client
 	publisher    *rabbitmq.Publisher
 	notifService notifservice.Service
@@ -51,6 +59,7 @@ func NewService(
 	employeeRepo employeerepo.Repository,
 	serviceRepo servicerepo.Repository,
 	scheduleRepo schedulerepo.Repository,
+	orgRepo orgrepo.Repository,
 	redis *redisclient.Client,
 	publisher *rabbitmq.Publisher,
 	notifService notifservice.Service,
@@ -61,6 +70,7 @@ func NewService(
 		employeeRepo: employeeRepo,
 		serviceRepo:  serviceRepo,
 		scheduleRepo: scheduleRepo,
+		orgRepo:      orgRepo,
 		redis:        redis,
 		publisher:    publisher,
 		notifService: notifService,
@@ -68,14 +78,72 @@ func NewService(
 }
 
 func (s *bookingService) Create(ctx context.Context, orgID uuid.UUID, req booking.CreateBookingRequest, correlationID uuid.UUID) (*booking.Booking, error) {
-	lockKey := fmt.Sprintf("booking:lock:%s:%s", req.EmployeeID, req.StartTime.Format(time.RFC3339))
+	return s.createBooking(ctx, orgID, req.CustomerID, req.EmployeeID, req.ServiceID, req.StartTime, req.Notes, booking.StatusConfirmed, nil, correlationID)
+}
+
+func (s *bookingService) CreatePublic(ctx context.Context, org *organization.Organization, req booking.PublicCreateBookingRequest, correlationID uuid.UUID) (*booking.Booking, error) {
+	settings := organization.ParseSettings(org.Settings)
+	if !settings.Booking.Enabled {
+		return nil, apperrors.Forbidden("public booking is not enabled for this organization")
+	}
+	if settings.Booking.EmailRequired && req.Customer.Email == "" {
+		return nil, apperrors.Validation("email is required")
+	}
+
+	normalizedPhone, err := phone.NormalizeE164(req.Customer.Phone)
+	if err != nil {
+		return nil, err
+	}
+	req.Customer.Phone = normalizedPhone
+
+	svc, err := s.serviceRepo.GetByID(ctx, org.ID, req.ServiceID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperrors.NotFound("service not found")
+		}
+		return nil, apperrors.Internal("failed to get service", err)
+	}
+	if !svc.IsActive {
+		return nil, apperrors.NotFound("service not found")
+	}
+
+	endTime := req.StartTime.Add(time.Duration(svc.DurationMinutes) * time.Minute)
+	if err := s.validateBookingWindow(req.StartTime, endTime, settings.Booking); err != nil {
+		return nil, err
+	}
+
+	employeeID, err := s.resolveEmployeeForPublicBooking(ctx, org.ID, req, svc.DurationMinutes)
+	if err != nil {
+		return nil, err
+	}
+
+	cust, err := s.findOrCreatePublicCustomer(ctx, org.ID, req.Customer)
+	if err != nil {
+		return nil, err
+	}
+
+	status := booking.BookingStatus(settings.Booking.InitialBookingStatus())
+	return s.createBooking(ctx, org.ID, cust.ID, employeeID, req.ServiceID, req.StartTime, req.Notes, status, &settings.Booking, correlationID)
+}
+
+func (s *bookingService) createBooking(
+	ctx context.Context,
+	orgID uuid.UUID,
+	customerID, employeeID, serviceID uuid.UUID,
+	startTime time.Time,
+	notes string,
+	status booking.BookingStatus,
+	bookingSettings *organization.BookingSettings,
+	correlationID uuid.UUID,
+) (*booking.Booking, error) {
+	lockKey := fmt.Sprintf("booking:lock:%s:%s", employeeID, startTime.Format(time.RFC3339))
 	acquired, err := s.redis.AcquireLock(ctx, lockKey, 30*time.Second)
 	if err != nil || !acquired {
 		return nil, apperrors.Conflict("unable to acquire booking lock, please retry")
 	}
 	defer s.redis.ReleaseLock(ctx, lockKey)
 
-	svc, err := s.serviceRepo.GetByID(ctx, orgID, req.ServiceID)
+	svc, err := s.serviceRepo.GetByID(ctx, orgID, serviceID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, apperrors.NotFound("service not found")
@@ -83,29 +151,47 @@ func (s *bookingService) Create(ctx context.Context, orgID uuid.UUID, req bookin
 		return nil, apperrors.Internal("failed to get service", err)
 	}
 
-	if _, err := s.customerRepo.GetByID(ctx, orgID, req.CustomerID); err != nil {
+	if _, err := s.customerRepo.GetByID(ctx, orgID, customerID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, apperrors.NotFound("customer not found")
 		}
 		return nil, apperrors.Internal("failed to get customer", err)
 	}
 
-	if _, err := s.employeeRepo.GetByID(ctx, orgID, req.EmployeeID); err != nil {
+	if _, err := s.employeeRepo.GetByID(ctx, orgID, employeeID); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, apperrors.NotFound("employee not found")
 		}
 		return nil, apperrors.Internal("failed to get employee", err)
 	}
 
-	endTime := req.StartTime.Add(time.Duration(svc.DurationMinutes) * time.Minute)
+	endTime := startTime.Add(time.Duration(svc.DurationMinutes) * time.Minute)
 
-	if err := s.validateSchedule(ctx, orgID, req.EmployeeID, req.StartTime, endTime); err != nil {
+	if bookingSettings != nil {
+		if err := s.validateBookingWindow(startTime, endTime, *bookingSettings); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := s.validateSchedule(ctx, orgID, employeeID, startTime, endTime); err != nil {
 		return nil, err
+	}
+
+	org, err := s.orgRepo.GetByID(ctx, orgID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperrors.NotFound("organization not found")
+		}
+		return nil, apperrors.Internal("failed to get organization", err)
+	}
+	currency := org.Currency
+	if currency == "" {
+		currency = "EUR"
 	}
 
 	var created *booking.Booking
 	err = s.repo.WithTransaction(ctx, func(tx *gorm.DB) error {
-		overlap, err := s.repo.HasOverlap(ctx, tx, orgID, req.EmployeeID, req.StartTime, endTime, nil)
+		overlap, err := s.repo.HasOverlap(ctx, tx, orgID, employeeID, startTime, endTime, nil)
 		if err != nil {
 			return apperrors.Internal("failed to check availability", err)
 		}
@@ -115,15 +201,15 @@ func (s *bookingService) Create(ctx context.Context, orgID uuid.UUID, req bookin
 
 		b := &booking.Booking{
 			OrganizationScoped: commonmodel.OrganizationScoped{OrganizationID: orgID},
-			CustomerID:         req.CustomerID,
-			EmployeeID:         req.EmployeeID,
-			ServiceID:          req.ServiceID,
-			StartTime:          req.StartTime,
+			CustomerID:         customerID,
+			EmployeeID:         employeeID,
+			ServiceID:          serviceID,
+			StartTime:          startTime,
 			EndTime:            endTime,
-			Status:             booking.StatusConfirmed,
-			Notes:              req.Notes,
+			Status:             status,
+			Notes:              notes,
 			Price:              svc.Price,
-			Currency:           svc.Currency,
+			Currency:           currency,
 		}
 
 		if err := s.repo.Create(ctx, tx, b); err != nil {
@@ -137,7 +223,9 @@ func (s *bookingService) Create(ctx context.Context, orgID uuid.UUID, req bookin
 	}
 
 	s.publishBookingEvent(ctx, events.EventBookingCreated, created, correlationID)
-	s.notifService.QueueBookingConfirmation(ctx, orgID, created, correlationID)
+	if created.Status == booking.StatusConfirmed {
+		s.notifService.QueueBookingConfirmation(ctx, orgID, created, correlationID)
+	}
 
 	return created, nil
 }
@@ -202,6 +290,18 @@ func (s *bookingService) Update(ctx context.Context, orgID, id uuid.UUID, req bo
 			return nil, err
 		}
 
+		org, err := s.orgRepo.GetByID(ctx, orgID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, apperrors.NotFound("organization not found")
+			}
+			return nil, apperrors.Internal("failed to get organization", err)
+		}
+		currency := org.Currency
+		if currency == "" {
+			currency = "EUR"
+		}
+
 		err = s.repo.WithTransaction(ctx, func(tx *gorm.DB) error {
 			overlap, err := s.repo.HasOverlap(ctx, tx, orgID, b.EmployeeID, b.StartTime, newEnd, &b.ID)
 			if err != nil {
@@ -213,7 +313,7 @@ func (s *bookingService) Update(ctx context.Context, orgID, id uuid.UUID, req bo
 			b.ServiceID = svc.ID
 			b.EndTime = newEnd
 			b.Price = svc.Price
-			b.Currency = svc.Currency
+			b.Currency = currency
 			return s.repo.Update(ctx, b)
 		})
 		if err != nil {
@@ -320,7 +420,13 @@ func (s *bookingService) GetAvailability(ctx context.Context, orgID uuid.UUID, r
 
 	dayOfWeek := int(date.Weekday())
 	workingHours, err := s.scheduleRepo.GetWorkingHours(ctx, orgID, req.EmployeeID, dayOfWeek)
-	if err != nil || len(workingHours) == 0 {
+	if err != nil {
+		return nil, apperrors.Internal("failed to get working hours", err)
+	}
+	if len(workingHours) == 0 {
+		workingHours = schedule.DefaultHoursForDay(dayOfWeek)
+	}
+	if len(workingHours) == 0 {
 		return []booking.TimeSlot{}, nil
 	}
 
@@ -335,8 +441,8 @@ func (s *bookingService) GetAvailability(ctx context.Context, orgID uuid.UUID, r
 
 	var slots []booking.TimeSlot
 	for _, wh := range workingHours {
-		current := combineDateAndTime(date, wh.StartTime)
-		dayEnd := combineDateAndTime(date, wh.EndTime)
+		current := combineDateAndTime(date, wh.StartTime.Time)
+		dayEnd := combineDateAndTime(date, wh.EndTime.Time)
 
 		for current.Add(duration).Before(dayEnd) || current.Add(duration).Equal(dayEnd) {
 			slotEnd := current.Add(duration)
@@ -350,8 +456,8 @@ func (s *bookingService) GetAvailability(ctx context.Context, orgID uuid.UUID, r
 			}
 
 			for _, br := range breaks {
-				brStart := combineDateAndTime(date, br.StartTime)
-				brEnd := combineDateAndTime(date, br.EndTime)
+				brStart := combineDateAndTime(date, br.StartTime.Time)
+				brEnd := combineDateAndTime(date, br.EndTime.Time)
 				if current.Before(brEnd) && slotEnd.After(brStart) {
 					available = false
 					break
@@ -371,6 +477,223 @@ func (s *bookingService) GetAvailability(ctx context.Context, orgID uuid.UUID, r
 	return slots, nil
 }
 
+func (s *bookingService) GetPublicAvailability(ctx context.Context, orgID uuid.UUID, req booking.PublicAvailabilityRequest, minNoticeMinutes int) ([]booking.PublicTimeSlot, error) {
+	serviceID, err := req.ParsedServiceID()
+	if err != nil {
+		return nil, apperrors.Validation("invalid service_id")
+	}
+
+	employeeID, err := req.ParsedEmployeeID()
+	if err != nil {
+		return nil, apperrors.Validation("invalid employee_id")
+	}
+
+	if employeeID != nil {
+		slots, err := s.GetAvailability(ctx, orgID, booking.AvailabilityRequest{
+			EmployeeID: *employeeID,
+			ServiceID:  serviceID,
+			Date:       req.Date,
+		})
+		if err != nil {
+			return nil, err
+		}
+		result := make([]booking.PublicTimeSlot, len(slots))
+		for i, slot := range slots {
+			result[i] = booking.PublicTimeSlot{
+				StartTime: slot.StartTime,
+				EndTime:   slot.EndTime,
+				Available: slot.Available,
+			}
+			if slot.Available {
+				result[i].EmployeeIDs = []uuid.UUID{*employeeID}
+			}
+		}
+		applyMinNoticeFilter(result, minNoticeMinutes)
+		return result, nil
+	}
+
+	employees, err := s.employeeRepo.ListByService(ctx, orgID, serviceID)
+	if err != nil {
+		return nil, apperrors.Internal("failed to list employees for service", err)
+	}
+	if len(employees) == 0 {
+		employees, _, err = s.employeeRepo.List(ctx, orgID, 0, 1000, true)
+		if err != nil {
+			return nil, apperrors.Internal("failed to list employees", err)
+		}
+	}
+
+	slotMap := make(map[string]*booking.PublicTimeSlot)
+	for _, emp := range employees {
+		slots, err := s.GetAvailability(ctx, orgID, booking.AvailabilityRequest{
+			EmployeeID: emp.ID,
+			ServiceID:  serviceID,
+			Date:       req.Date,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, slot := range slots {
+			key := slot.StartTime.Format(time.RFC3339)
+			existing, ok := slotMap[key]
+			if !ok {
+				slotMap[key] = &booking.PublicTimeSlot{
+					StartTime: slot.StartTime,
+					EndTime:   slot.EndTime,
+					Available: slot.Available,
+				}
+				existing = slotMap[key]
+			}
+			if slot.Available {
+				existing.Available = true
+				existing.EmployeeIDs = append(existing.EmployeeIDs, emp.ID)
+			}
+		}
+	}
+
+	result := make([]booking.PublicTimeSlot, 0, len(slotMap))
+	for _, slot := range slotMap {
+		result = append(result, *slot)
+	}
+
+	sortPublicTimeSlots(result)
+	applyMinNoticeFilter(result, minNoticeMinutes)
+	return result, nil
+}
+
+func applyMinNoticeFilter(slots []booking.PublicTimeSlot, minNoticeMinutes int) {
+	if minNoticeMinutes <= 0 {
+		return
+	}
+	minStart := time.Now().Add(time.Duration(minNoticeMinutes) * time.Minute)
+	for i := range slots {
+		if slots[i].Available && slots[i].StartTime.Before(minStart) {
+			slots[i].Available = false
+			slots[i].EmployeeIDs = nil
+		}
+	}
+}
+
+func (s *bookingService) findOrCreatePublicCustomer(ctx context.Context, orgID uuid.UUID, info booking.PublicCustomerInfo) (*customer.Customer, error) {
+	existing, err := s.customerRepo.FindByPhoneOrEmail(ctx, orgID, info.Phone, info.Email)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, apperrors.Internal("failed to find customer", err)
+	}
+	if existing != nil {
+		updated := false
+		if info.FirstName != "" && existing.FirstName != info.FirstName {
+			existing.FirstName = info.FirstName
+			updated = true
+		}
+		if info.LastName != "" && existing.LastName != info.LastName {
+			existing.LastName = info.LastName
+			updated = true
+		}
+		if info.Email != "" && existing.Email != info.Email {
+			existing.Email = info.Email
+			updated = true
+		}
+		if info.Phone != "" && existing.Phone != info.Phone {
+			existing.Phone = info.Phone
+			updated = true
+		}
+		if updated {
+			if err := s.customerRepo.Update(ctx, existing); err != nil {
+				return nil, apperrors.Internal("failed to update customer", err)
+			}
+		}
+		return existing, nil
+	}
+
+	c := &customer.Customer{
+		OrganizationScoped: commonmodel.OrganizationScoped{OrganizationID: orgID},
+		FirstName:          info.FirstName,
+		LastName:           info.LastName,
+		Email:              info.Email,
+		Phone:              info.Phone,
+	}
+	if err := s.customerRepo.Create(ctx, c); err != nil {
+		return nil, apperrors.Internal("failed to create customer", err)
+	}
+	return c, nil
+}
+
+func (s *bookingService) resolveEmployeeForPublicBooking(ctx context.Context, orgID uuid.UUID, req booking.PublicCreateBookingRequest, durationMinutes int) (uuid.UUID, error) {
+	endTime := req.StartTime.Add(time.Duration(durationMinutes) * time.Minute)
+
+	if req.EmployeeID != nil {
+		if err := s.validateSchedule(ctx, orgID, *req.EmployeeID, req.StartTime, endTime); err != nil {
+			return uuid.Nil, err
+		}
+		overlap, err := s.repo.HasOverlap(ctx, nil, orgID, *req.EmployeeID, req.StartTime, endTime, nil)
+		if err != nil {
+			return uuid.Nil, apperrors.Internal("failed to check availability", err)
+		}
+		if overlap {
+			return uuid.Nil, apperrors.ErrDoubleBooking
+		}
+		return *req.EmployeeID, nil
+	}
+
+	employees, err := s.employeeRepo.ListByService(ctx, orgID, req.ServiceID)
+	if err != nil {
+		return uuid.Nil, apperrors.Internal("failed to list employees for service", err)
+	}
+	if len(employees) == 0 {
+		employees, _, err = s.employeeRepo.List(ctx, orgID, 0, 1000, true)
+		if err != nil {
+			return uuid.Nil, apperrors.Internal("failed to list employees", err)
+		}
+	}
+
+	for _, emp := range employees {
+		if err := s.validateSchedule(ctx, orgID, emp.ID, req.StartTime, endTime); err != nil {
+			continue
+		}
+		overlap, err := s.repo.HasOverlap(ctx, nil, orgID, emp.ID, req.StartTime, endTime, nil)
+		if err != nil {
+			return uuid.Nil, apperrors.Internal("failed to check availability", err)
+		}
+		if !overlap {
+			return emp.ID, nil
+		}
+	}
+
+	return uuid.Nil, apperrors.ErrDoubleBooking
+}
+
+func (s *bookingService) validateBookingWindow(start, end time.Time, settings organization.BookingSettings) error {
+	now := time.Now()
+	minStart := now.Add(time.Duration(settings.MinNoticeMinutes) * time.Minute)
+	if start.Before(minStart) {
+		return apperrors.Validation("booking is too soon")
+	}
+
+	maxStart := now.AddDate(0, 0, settings.BookingWindowDays)
+	if settings.MaxNoticeMinutes != nil && *settings.MaxNoticeMinutes > 0 {
+		maxFromMinutes := now.Add(time.Duration(*settings.MaxNoticeMinutes) * time.Minute)
+		if maxFromMinutes.Before(maxStart) {
+			maxStart = maxFromMinutes
+		}
+	}
+	if start.After(maxStart) {
+		return apperrors.Validation("booking is too far in the future")
+	}
+
+	_ = end
+	return nil
+}
+
+func sortPublicTimeSlots(slots []booking.PublicTimeSlot) {
+	for i := 0; i < len(slots); i++ {
+		for j := i + 1; j < len(slots); j++ {
+			if slots[j].StartTime.Before(slots[i].StartTime) {
+				slots[i], slots[j] = slots[j], slots[i]
+			}
+		}
+	}
+}
+
 func (s *bookingService) validateSchedule(ctx context.Context, orgID, employeeID uuid.UUID, start, end time.Time) error {
 	dayOfWeek := int(start.Weekday())
 	workingHours, err := s.scheduleRepo.GetWorkingHours(ctx, orgID, employeeID, dayOfWeek)
@@ -386,7 +709,7 @@ func (s *bookingService) validateSchedule(ctx context.Context, orgID, employeeID
 
 	withinHours := false
 	for _, wh := range workingHours {
-		if !startTime.Before(wh.StartTime) && !endTime.After(wh.EndTime) {
+		if !startTime.Before(wh.StartTime.Time) && !endTime.After(wh.EndTime.Time) {
 			withinHours = true
 			break
 		}

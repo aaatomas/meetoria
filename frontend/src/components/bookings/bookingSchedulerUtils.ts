@@ -1,8 +1,80 @@
 import type { SchedulerEvent, SchedulerResource } from '@mui/x-scheduler/models';
-import type { Booking, Customer, Employee, Service } from '../../api/client';
+import dayjs from 'dayjs';
+import type { Booking, Customer, DaySchedule, Employee, Service } from '../../api/client';
+import { defaultWeekSchedule } from '../../api/client';
 import { resolveBookingStatusEventColor } from '../../constants/bookingStatuses';
 import { formatPrice } from '../../utils/formatCurrency';
 import { bookingClassName } from './schedulerEventUtils';
+
+export interface SchedulerHourRange {
+  startTime: number;
+  endTime: number;
+}
+
+const DEFAULT_SCHEDULER_HOUR_RANGE: SchedulerHourRange = { startTime: 8, endTime: 20 };
+
+function parseClockTimeToMinutes(time: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+  if (!match) return null;
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+
+  return hours * 60 + minutes;
+}
+
+function minutesToSchedulerEndHour(minutes: number): number {
+  if (minutes % 60 === 0) {
+    return minutes / 60;
+  }
+  return Math.ceil(minutes / 60);
+}
+
+export function getSchedulerHourRange(
+  schedule: DaySchedule[] = defaultWeekSchedule(),
+  bookings: Pick<Booking, 'start_time' | 'end_time'>[] = [],
+): SchedulerHourRange {
+  let minMinutes = Infinity;
+  let maxMinutes = -Infinity;
+
+  const consider = (minutes: number) => {
+    minMinutes = Math.min(minMinutes, minutes);
+    maxMinutes = Math.max(maxMinutes, minutes);
+  };
+
+  for (const day of schedule) {
+    for (const slot of day.slots) {
+      const start = parseClockTimeToMinutes(slot.start_time);
+      const end = parseClockTimeToMinutes(slot.end_time);
+      if (start != null && end != null && end > start) {
+        consider(start);
+        consider(end);
+      }
+    }
+  }
+
+  for (const booking of bookings) {
+    const start = dayjs(booking.start_time);
+    const end = dayjs(booking.end_time);
+    if (start.isValid()) {
+      consider(start.hour() * 60 + start.minute());
+    }
+    if (end.isValid()) {
+      consider(end.hour() * 60 + end.minute());
+    }
+  }
+
+  if (!Number.isFinite(minMinutes) || !Number.isFinite(maxMinutes) || minMinutes >= maxMinutes) {
+    return DEFAULT_SCHEDULER_HOUR_RANGE;
+  }
+
+  const startTime = Math.max(0, Math.min(23, Math.floor(minMinutes / 60)));
+  let endTime = Math.min(24, minutesToSchedulerEndHour(maxMinutes));
+  endTime = Math.max(startTime + 1, endTime);
+
+  return { startTime, endTime };
+}
 
 export interface MeetoriaSchedulerEvent extends SchedulerEvent {
   meetoria?: {

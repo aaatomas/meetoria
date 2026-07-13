@@ -1,25 +1,27 @@
 import {
+  Alert,
   Box,
-  Typography,
   Button,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  IconButton,
+  ListItemIcon,
+  Menu,
+  MenuItem,
+  Paper,
+  Stack,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
-  Paper,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
   TextField,
-  Stack,
-  Chip,
-  IconButton,
-  Alert,
+  Typography,
 } from '@mui/material';
-import { Add, PhotoCamera } from '@mui/icons-material';
+import { Add, EditOutlined, MoreVert, PhotoCamera } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -27,11 +29,16 @@ import { z } from 'zod';
 import { useRef, useState } from 'react';
 import {
   api,
+  checkEmployeeDeletion,
+  deleteEmployee,
   Employee,
-  PaginatedResponse,
-  uploadEmployeeAvatar,
   getApiErrorMessage,
+  PaginatedResponse,
+  updateEmployee,
+  uploadEmployeeAvatar,
 } from '../api/client';
+import { ConfirmDeleteDialog } from '../components/common/ConfirmDeleteDialog';
+import { EditDialogTitle } from '../components/EditDialogTitle';
 import { EmployeeAvatar } from '../components/employees/EmployeeAvatar';
 
 const schema = z.object({
@@ -40,6 +47,7 @@ const schema = z.object({
   email: z.string().email().optional().or(z.literal('')),
   phone: z.string().optional(),
   title: z.string().optional(),
+  is_active: z.boolean(),
 });
 
 type FormData = z.infer<typeof schema>;
@@ -95,11 +103,13 @@ function AvatarPicker({
 export function EmployeesPage() {
   const orgId = localStorage.getItem('organization_id')!;
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<Employee | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
+  const [menuEmployee, setMenuEmployee] = useState<Employee | null>(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | undefined>();
-  const [uploadingEmployeeId, setUploadingEmployeeId] = useState<string | null>(null);
-  const rowInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
   const { data: employees, isLoading } = useQuery({
@@ -108,24 +118,49 @@ export function EmployeesPage() {
     enabled: !!orgId,
   });
 
+  const { data: deletionCheck, isLoading: deletionCheckLoading } = useQuery({
+    queryKey: ['employee-deletion-check', orgId, editing?.id],
+    queryFn: () => checkEmployeeDeletion(orgId, editing!.id),
+    enabled: confirmDeleteOpen && !!editing,
+  });
+
   const { control, handleSubmit, reset, watch } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { first_name: '', last_name: '', email: '', phone: '', title: '' },
+    defaultValues: { first_name: '', last_name: '', email: '', phone: '', title: '', is_active: true },
   });
 
   const firstName = watch('first_name');
   const lastName = watch('last_name');
 
   const resetDialog = () => {
-    reset();
+    reset({ first_name: '', last_name: '', email: '', phone: '', title: '', is_active: true });
     setSubmitError(null);
+    setEditing(null);
+    setConfirmDeleteOpen(false);
     setAvatarFile(null);
     if (avatarPreview) URL.revokeObjectURL(avatarPreview);
     setAvatarPreview(undefined);
   };
 
-  const openDialog = () => {
+  const openCreateDialog = () => {
     resetDialog();
+    setOpen(true);
+  };
+
+  const openEditDialog = (employee: Employee) => {
+    setEditing(employee);
+    setSubmitError(null);
+    setAvatarFile(null);
+    if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+    setAvatarPreview(undefined);
+    reset({
+      first_name: employee.first_name,
+      last_name: employee.last_name,
+      email: employee.email ?? '',
+      phone: employee.phone ?? '',
+      title: employee.title ?? '',
+      is_active: employee.is_active,
+    });
     setOpen(true);
   };
 
@@ -140,12 +175,27 @@ export function EmployeesPage() {
     setAvatarPreview(URL.createObjectURL(file));
   };
 
-  const createMutation = useMutation({
+  const saveMutation = useMutation({
     mutationFn: async (data: FormData) => {
-      const { data: employee } = await api.post<Employee>(`/organizations/${orgId}/employees`, data);
-      if (avatarFile) {
-        await uploadEmployeeAvatar(orgId, employee.id, avatarFile);
+      const payload = {
+        first_name: data.first_name,
+        last_name: data.last_name,
+        email: data.email || undefined,
+        phone: data.phone || undefined,
+        title: data.title || undefined,
+        is_active: data.is_active,
+      };
+
+      if (editing) {
+        const employee = await updateEmployee(orgId, editing.id, payload);
+        if (avatarFile) {
+          await uploadEmployeeAvatar(orgId, employee.id, avatarFile);
+        }
+        return employee;
       }
+
+      const { is_active: _isActive, ...createData } = payload;
+      const { data: employee } = await api.post<Employee>(`/organizations/${orgId}/employees`, createData);
       return employee;
     },
     onSuccess: () => {
@@ -155,32 +205,46 @@ export function EmployeesPage() {
     onError: (error) => setSubmitError(getApiErrorMessage(error)),
   });
 
-  const avatarMutation = useMutation({
-    mutationFn: ({ employeeId, file }: { employeeId: string; file: File }) =>
-      uploadEmployeeAvatar(orgId, employeeId, file),
+  const deleteMutation = useMutation({
+    mutationFn: (employeeId: string) => deleteEmployee(orgId, employeeId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['employees'] });
-      setUploadingEmployeeId(null);
+      closeDialog();
     },
-    onError: (error) => {
-      setSubmitError(getApiErrorMessage(error));
-      setUploadingEmployeeId(null);
-    },
+    onError: (error) => setSubmitError(getApiErrorMessage(error)),
   });
 
   const onSubmit = handleSubmit(
     (data) => {
       setSubmitError(null);
-      createMutation.mutate(data);
+      saveMutation.mutate(data);
     },
     () => setSubmitError('Please fill in all required fields.'),
   );
+
+  const openMenu = (event: React.MouseEvent<HTMLElement>, employee: Employee) => {
+    setMenuAnchor(event.currentTarget);
+    setMenuEmployee(employee);
+  };
+
+  const closeMenu = () => {
+    setMenuAnchor(null);
+    setMenuEmployee(null);
+  };
+
+  const dialogAvatarUrl = avatarPreview ?? (editing ? editing.avatar_url : undefined);
+
+  const deleteMessage = deletionCheckLoading
+    ? 'Checking related bookings…'
+    : deletionCheck?.can_delete
+      ? `Delete ${editing?.first_name} ${editing?.last_name}? This cannot be undone.`
+      : deletionCheck?.message ?? 'Cannot delete this employee.';
 
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" mb={3}>
         <Typography variant="h5" fontWeight={700}>Employees</Typography>
-        <Button variant="contained" startIcon={<Add />} onClick={openDialog}>Add Employee</Button>
+        <Button variant="contained" startIcon={<Add />} onClick={openCreateDialog}>Add Employee</Button>
       </Box>
 
       {submitError && !open && (
@@ -197,43 +261,22 @@ export function EmployeesPage() {
               <TableCell>Name</TableCell>
               <TableCell>Title</TableCell>
               <TableCell>Status</TableCell>
+              <TableCell width={56} />
             </TableRow>
           </TableHead>
           <TableBody>
             {isLoading ? (
-              <TableRow><TableCell colSpan={4}>Loading...</TableCell></TableRow>
+              <TableRow><TableCell colSpan={5}>Loading...</TableCell></TableRow>
             ) : employees?.map((employee) => (
               <TableRow key={employee.id}>
                 <TableCell>
-                  <Box position="relative" display="inline-flex">
-                    <EmployeeAvatar
-                      firstName={employee.first_name}
-                      lastName={employee.last_name}
-                      avatarUrl={employee.avatar_url}
-                      color={employee.color}
-                      cacheKey={employee.updated_at}
-                    />
-                    <IconButton
-                      size="small"
-                      aria-label="Change photo"
-                      disabled={avatarMutation.isPending && uploadingEmployeeId === employee.id}
-                      onClick={() => {
-                        setSubmitError(null);
-                        setUploadingEmployeeId(employee.id);
-                        rowInputRef.current?.click();
-                      }}
-                      sx={{
-                        position: 'absolute',
-                        right: -8,
-                        bottom: -8,
-                        bgcolor: 'background.paper',
-                        boxShadow: 1,
-                        '&:hover': { bgcolor: 'background.paper' },
-                      }}
-                    >
-                      <PhotoCamera fontSize="small" />
-                    </IconButton>
-                  </Box>
+                  <EmployeeAvatar
+                    firstName={employee.first_name}
+                    lastName={employee.last_name}
+                    avatarUrl={employee.avatar_url}
+                    color={employee.color}
+                    cacheKey={employee.updated_at}
+                  />
                 </TableCell>
                 <TableCell>{employee.first_name} {employee.last_name}</TableCell>
                 <TableCell>{employee.title}</TableCell>
@@ -244,38 +287,47 @@ export function EmployeesPage() {
                     size="small"
                   />
                 </TableCell>
+                <TableCell align="right">
+                  <IconButton
+                    size="small"
+                    aria-label={`Actions for ${employee.first_name} ${employee.last_name}`}
+                    onClick={(e) => openMenu(e, employee)}
+                  >
+                    <MoreVert fontSize="small" />
+                  </IconButton>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </TableContainer>
 
-      <input
-        ref={rowInputRef}
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        hidden
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file && uploadingEmployeeId) {
-            avatarMutation.mutate({ employeeId: uploadingEmployeeId, file });
-          }
-          event.target.value = '';
-        }}
-      />
+      <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={closeMenu}>
+        <MenuItem
+          onClick={() => {
+            if (menuEmployee) openEditDialog(menuEmployee);
+            closeMenu();
+          }}
+        >
+          <ListItemIcon><EditOutlined fontSize="small" /></ListItemIcon>
+          Edit
+        </MenuItem>
+      </Menu>
 
       <Dialog open={open} onClose={closeDialog} maxWidth="sm" fullWidth>
-        <DialogTitle>Add Employee</DialogTitle>
+        <EditDialogTitle title={editing ? 'Edit Employee' : 'Add Employee'} showActive={!!editing} control={control} />
         <Box component="form" onSubmit={onSubmit}>
           <DialogContent>
             <Stack spacing={2} mt={1}>
               {submitError && <Alert severity="error">{submitError}</Alert>}
-              <AvatarPicker
-                previewUrl={avatarPreview}
-                firstName={firstName}
-                lastName={lastName}
-                onSelect={handleAvatarSelect}
-              />
+              {editing && (
+                <AvatarPicker
+                  previewUrl={dialogAvatarUrl}
+                  firstName={firstName}
+                  lastName={lastName}
+                  onSelect={handleAvatarSelect}
+                />
+              )}
               <Controller name="first_name" control={control} render={({ field }) => (
                 <TextField {...field} label="First Name" fullWidth required />
               )} />
@@ -293,14 +345,33 @@ export function EmployeesPage() {
               )} />
             </Stack>
           </DialogContent>
-          <DialogActions>
-            <Button type="button" onClick={closeDialog}>Cancel</Button>
-            <Button type="submit" variant="contained" disabled={createMutation.isPending}>
-              {createMutation.isPending ? 'Creating...' : 'Create'}
-            </Button>
+          <DialogActions sx={{ justifyContent: 'space-between', px: 3, pb: 2 }}>
+            {editing ? (
+              <Button type="button" color="error" onClick={() => setConfirmDeleteOpen(true)}>
+                Delete
+              </Button>
+            ) : (
+              <span />
+            )}
+            <Box>
+              <Button type="button" onClick={closeDialog}>Cancel</Button>
+              <Button type="submit" variant="contained" disabled={saveMutation.isPending} sx={{ ml: 1 }}>
+                {saveMutation.isPending ? 'Saving…' : editing ? 'Save' : 'Create'}
+              </Button>
+            </Box>
           </DialogActions>
         </Box>
       </Dialog>
+
+      <ConfirmDeleteDialog
+        open={confirmDeleteOpen}
+        title="Delete employee"
+        message={deleteMessage}
+        loading={deleteMutation.isPending || deletionCheckLoading}
+        confirmDisabled={deletionCheckLoading || !deletionCheck?.can_delete}
+        onCancel={() => setConfirmDeleteOpen(false)}
+        onConfirm={() => editing && deleteMutation.mutate(editing.id)}
+      />
     </Box>
   );
 }

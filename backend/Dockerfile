@@ -18,6 +18,7 @@ RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 
 COPY --from=builder /meetoria-api .
+COPY --from=builder /app/migrations ./migrations
 
 EXPOSE 8081
 

@@ -12,6 +12,7 @@ import (
 type Repository interface {
 	Create(ctx context.Context, c *customer.Customer) error
 	GetByID(ctx context.Context, orgID, id uuid.UUID) (*customer.Customer, error)
+	FindByPhoneOrEmail(ctx context.Context, orgID uuid.UUID, phone, email string) (*customer.Customer, error)
 	Update(ctx context.Context, c *customer.Customer) error
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
 	List(ctx context.Context, orgID uuid.UUID, offset, limit int, search string) ([]customer.Customer, int64, error)
@@ -41,6 +42,30 @@ func (r *gormRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) (*cus
 		return nil, err
 	}
 	return &c, nil
+}
+
+func (r *gormRepository) FindByPhoneOrEmail(ctx context.Context, orgID uuid.UUID, phone, email string) (*customer.Customer, error) {
+	if phone != "" {
+		var c customer.Customer
+		err := r.scoped(ctx, orgID).Where("phone = ?", phone).First(&c).Error
+		if err == nil {
+			return &c, nil
+		}
+		if err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+	}
+	if email != "" {
+		var c customer.Customer
+		err := r.scoped(ctx, orgID).Where("email = ?", email).First(&c).Error
+		if err == nil {
+			return &c, nil
+		}
+		if err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (r *gormRepository) Update(ctx context.Context, c *customer.Customer) error {

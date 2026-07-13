@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	bookingrepo "github.com/meetoria/meetoria/backend/internal/booking/repository"
 	apperrors "github.com/meetoria/meetoria/backend/internal/common/errors"
 	commonmodel "github.com/meetoria/meetoria/backend/internal/common/model"
 	"github.com/meetoria/meetoria/backend/internal/common/storage"
@@ -19,17 +21,19 @@ type Service interface {
 	GetByID(ctx context.Context, orgID, id uuid.UUID) (*employee.Employee, error)
 	Update(ctx context.Context, orgID, id uuid.UUID, req employee.UpdateEmployeeRequest) (*employee.Employee, error)
 	UpdateAvatar(ctx context.Context, orgID, id uuid.UUID, avatarURL string) (*employee.Employee, error)
+	CheckDeletion(ctx context.Context, orgID, id uuid.UUID) (commonmodel.DeletionCheck, error)
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
 	List(ctx context.Context, orgID uuid.UUID, params commonmodel.PaginationParams, activeOnly bool) (commonmodel.PaginatedResponse[employee.Employee], error)
 }
 
 type employeeService struct {
-	repo    repository.Repository
-	storage *storage.LocalStorage
+	repo        repository.Repository
+	bookingRepo bookingrepo.Repository
+	storage     *storage.LocalStorage
 }
 
-func NewService(repo repository.Repository, fileStorage *storage.LocalStorage) Service {
-	return &employeeService{repo: repo, storage: fileStorage}
+func NewService(repo repository.Repository, bookingRepo bookingrepo.Repository, fileStorage *storage.LocalStorage) Service {
+	return &employeeService{repo: repo, bookingRepo: bookingRepo, storage: fileStorage}
 }
 
 func (s *employeeService) Create(ctx context.Context, orgID uuid.UUID, req employee.CreateEmployeeRequest) (*employee.Employee, error) {
@@ -126,10 +130,42 @@ func (s *employeeService) UpdateAvatar(ctx context.Context, orgID, id uuid.UUID,
 	return e, nil
 }
 
+func (s *employeeService) CheckDeletion(ctx context.Context, orgID, id uuid.UUID) (commonmodel.DeletionCheck, error) {
+	if _, err := s.GetByID(ctx, orgID, id); err != nil {
+		return commonmodel.DeletionCheck{}, err
+	}
+
+	count, err := s.bookingRepo.CountByEmployeeID(ctx, orgID, id)
+	if err != nil {
+		return commonmodel.DeletionCheck{}, apperrors.Internal("failed to check employee bookings", err)
+	}
+
+	check := commonmodel.DeletionCheck{
+		CanDelete:     count == 0,
+		BookingsCount: count,
+	}
+	if count > 0 {
+		check.Message = fmt.Sprintf("Cannot delete employee with %d booking(s). Deactivate them instead.", count)
+	}
+	return check, nil
+}
+
 func (s *employeeService) Delete(ctx context.Context, orgID, id uuid.UUID) error {
+	check, err := s.CheckDeletion(ctx, orgID, id)
+	if err != nil {
+		return err
+	}
+	if !check.CanDelete {
+		return apperrors.Conflict(check.Message)
+	}
+
 	e, err := s.GetByID(ctx, orgID, id)
 	if err != nil {
 		return err
+	}
+
+	if err := s.repo.DeleteEmployeeServiceLinks(ctx, orgID, id); err != nil {
+		return apperrors.Internal("failed to remove employee service links", err)
 	}
 
 	if s.storage != nil && e.AvatarURL != "" {

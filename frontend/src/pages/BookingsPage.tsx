@@ -18,7 +18,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useState, useMemo } from 'react';
 import dayjs, { Dayjs } from 'dayjs';
-import { api, Booking, Customer, Employee, Service, PaginatedResponse, getApiErrorMessage } from '../api/client';
+import { api, Booking, Customer, Employee, Service, PaginatedResponse, getApiErrorMessage, parseOrganizationSettings, type Organization } from '../api/client';
 import { BookingScheduler } from '../components/bookings/BookingScheduler';
 import { BookingDateTimeFields } from '../components/bookings/BookingDateTimeFields';
 import { renderEmployeeLabel } from '../components/bookings/renderEmployeeLabel';
@@ -47,6 +47,15 @@ export function BookingsPage() {
   const [open, setOpen] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const queryClient = useQueryClient();
+
+  const { data: org } = useQuery({
+    queryKey: ['organization', orgId],
+    queryFn: async () => (await api.get<Organization>(`/organizations/${orgId}`)).data,
+    enabled: !!orgId,
+  });
+
+  const currency = org?.currency?.trim() || 'EUR';
+  const timeFormat = parseOrganizationSettings(org?.settings).time_format;
 
   const { data: bookings = [], isLoading: bookingsLoading } = useQuery({
     queryKey: ['bookings', orgId],
@@ -166,6 +175,8 @@ export function BookingsPage() {
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <BookingScheduler
           orgId={orgId}
+          currency={currency}
+          timeFormat={timeFormat}
           bookings={bookings}
           customers={customers}
           employees={employees}
