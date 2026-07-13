@@ -31,9 +31,11 @@ import {
   api,
   checkServiceDeletion,
   deleteService,
+  getActiveBranchId,
   getApiErrorMessage,
+  listServices,
   Service,
-  PaginatedResponse,
+  resolveActiveBranchId,
   updateService,
   type Organization,
 } from '../api/client';
@@ -53,6 +55,7 @@ type FormData = z.infer<typeof schema>;
 
 export function ServicesPage() {
   const orgId = localStorage.getItem('organization_id')!;
+  const branchId = getActiveBranchId();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Service | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
@@ -70,9 +73,9 @@ export function ServicesPage() {
   const currency = org?.currency?.trim() || 'EUR';
 
   const { data: services, isLoading } = useQuery({
-    queryKey: ['services', orgId],
-    queryFn: async () => (await api.get<PaginatedResponse<Service>>(`/organizations/${orgId}/services`)).data.data,
-    enabled: !!orgId,
+    queryKey: ['services', orgId, branchId],
+    queryFn: () => listServices(orgId, branchId),
+    enabled: !!orgId && !!branchId,
   });
 
   const { data: deletionCheck, isLoading: deletionCheckLoading } = useQuery({
@@ -125,12 +128,18 @@ export function ServicesPage() {
           is_active: data.is_active,
         });
       }
-      return api.post(`/organizations/${orgId}/services`, {
+      const activeBranchId = branchId ?? (await resolveActiveBranchId(orgId));
+      if (!activeBranchId) {
+        throw new Error('No location selected. Choose a location in the header.');
+      }
+      const { data: created } = await api.post<Service>(`/organizations/${orgId}/services`, {
         name: data.name,
         description: data.description,
         duration_minutes: data.duration_minutes,
         price: data.price,
+        branch_id: activeBranchId,
       });
+      return created;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['services'] });
@@ -163,6 +172,15 @@ export function ServicesPage() {
     : deletionCheck?.can_delete
       ? `Delete "${editing?.name}"? This cannot be undone.`
       : deletionCheck?.message ?? 'Cannot delete this service.';
+
+  if (!branchId) {
+    return (
+      <Box>
+        <Typography variant="h5" fontWeight={700} gutterBottom>Services</Typography>
+        <Alert severity="info">Select a location in the header to manage branch services.</Alert>
+      </Box>
+    );
+  }
 
   return (
     <Box>

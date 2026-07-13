@@ -12,9 +12,9 @@ import (
 )
 
 type Service interface {
-	GetOrgSchedule(ctx context.Context, orgID uuid.UUID) ([]schedule.DaySchedule, error)
-	SetOrgSchedule(ctx context.Context, orgID uuid.UUID, req schedule.SetWorkingHoursRequest) error
-	SeedDefaultHours(ctx context.Context, orgID uuid.UUID) error
+	GetBranchSchedule(ctx context.Context, orgID, branchID uuid.UUID) ([]schedule.DaySchedule, error)
+	SetBranchSchedule(ctx context.Context, orgID uuid.UUID, req schedule.SetWorkingHoursRequest) error
+	SeedDefaultHours(ctx context.Context, orgID, branchID uuid.UUID) error
 }
 
 type scheduleService struct {
@@ -25,18 +25,22 @@ func NewService(repo schedulerepo.Repository) Service {
 	return &scheduleService{repo: repo}
 }
 
-func (s *scheduleService) GetOrgSchedule(ctx context.Context, orgID uuid.UUID) ([]schedule.DaySchedule, error) {
-	hours, err := s.repo.ListOrgWorkingHours(ctx, orgID)
+func (s *scheduleService) GetBranchSchedule(ctx context.Context, orgID, branchID uuid.UUID) ([]schedule.DaySchedule, error) {
+	hours, err := s.repo.ListBranchWorkingHours(ctx, orgID, branchID)
 	if err != nil {
 		return nil, apperrors.Internal("failed to get working hours", err)
 	}
 	if len(hours) == 0 {
-		hours = schedule.DefaultOrgWorkingHours(orgID)
+		hours = schedule.DefaultBranchWorkingHours(orgID, branchID)
 	}
 	return groupHoursByDay(hours), nil
 }
 
-func (s *scheduleService) SetOrgSchedule(ctx context.Context, orgID uuid.UUID, req schedule.SetWorkingHoursRequest) error {
+func (s *scheduleService) SetBranchSchedule(ctx context.Context, orgID uuid.UUID, req schedule.SetWorkingHoursRequest) error {
+	if req.BranchID == nil {
+		return apperrors.Validation("branch_id is required")
+	}
+
 	var records []schedule.WorkingHours
 	for _, day := range req.Schedule {
 		for _, slot := range day.Slots {
@@ -51,8 +55,10 @@ func (s *scheduleService) SetOrgSchedule(ctx context.Context, orgID uuid.UUID, r
 			if !end.Time.After(start.Time) {
 				return apperrors.Validation("end_time must be after start_time")
 			}
+			branchID := *req.BranchID
 			records = append(records, schedule.WorkingHours{
 				OrganizationScoped: commonmodel.OrganizationScoped{OrganizationID: orgID},
+				BranchID:           &branchID,
 				DayOfWeek:          day.DayOfWeek,
 				StartTime:          start,
 				EndTime:            end,
@@ -61,15 +67,11 @@ func (s *scheduleService) SetOrgSchedule(ctx context.Context, orgID uuid.UUID, r
 		}
 	}
 
-	for i := range records {
-		records[i].OrganizationID = orgID
-	}
-
-	return s.repo.SetWorkingHours(ctx, orgID, req.EmployeeID, records)
+	return s.repo.SetWorkingHours(ctx, orgID, req.BranchID, req.EmployeeID, records)
 }
 
-func (s *scheduleService) SeedDefaultHours(ctx context.Context, orgID uuid.UUID) error {
-	return s.repo.SetWorkingHours(ctx, orgID, nil, schedule.DefaultOrgWorkingHours(orgID))
+func (s *scheduleService) SeedDefaultHours(ctx context.Context, orgID, branchID uuid.UUID) error {
+	return s.repo.SetWorkingHours(ctx, orgID, &branchID, nil, schedule.DefaultBranchWorkingHours(orgID, branchID))
 }
 
 func groupHoursByDay(hours []schedule.WorkingHours) []schedule.DaySchedule {

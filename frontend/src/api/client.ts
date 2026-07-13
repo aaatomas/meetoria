@@ -31,6 +31,11 @@ api.interceptors.request.use((config) => {
     config.headers['X-Organization-ID'] = orgId;
   }
 
+  const branchId = localStorage.getItem('branch_id');
+  if (branchId) {
+    config.headers['X-Branch-ID'] = branchId;
+  }
+
   if (config.data instanceof FormData) {
     delete config.headers['Content-Type'];
   }
@@ -56,6 +61,93 @@ export interface Organization {
   phone?: string;
   is_active: boolean;
   settings?: string;
+}
+
+export interface Branch {
+  id: string;
+  organization_id: string;
+  name: string;
+  address?: string;
+  city?: string;
+  country?: string;
+  timezone?: string;
+  phone?: string;
+  email?: string;
+  is_active: boolean;
+  is_default: boolean;
+}
+
+export function getActiveBranchId(): string | null {
+  return localStorage.getItem('branch_id');
+}
+
+export async function resolveActiveBranchId(orgId: string): Promise<string | null> {
+  const stored = getActiveBranchId();
+  if (stored) return stored;
+  const branches = await listBranches(orgId);
+  const defaultBranch = branches.find((b) => b.is_default) ?? branches[0];
+  if (defaultBranch) {
+    setActiveBranchId(defaultBranch.id);
+    return defaultBranch.id;
+  }
+  return null;
+}
+
+export function setActiveOrganizationId(orgId: string): void {
+  localStorage.setItem('organization_id', orgId);
+  localStorage.removeItem('branch_id');
+}
+
+export function setActiveBranchId(branchId: string): void {
+  localStorage.setItem('branch_id', branchId);
+}
+
+export function locationKey(orgId: string, branchId: string): string {
+  return `${orgId}:${branchId}`;
+}
+
+export function parseLocationKey(key: string): { orgId: string; branchId: string } | null {
+  const [orgId, branchId] = key.split(':');
+  if (!orgId || !branchId) return null;
+  return { orgId, branchId };
+}
+
+export function setActiveLocation(orgId: string, branchId: string): void {
+  localStorage.setItem('organization_id', orgId);
+  localStorage.setItem('branch_id', branchId);
+}
+
+export async function listBranches(orgId: string): Promise<Branch[]> {
+  const { data } = await api.get<PaginatedResponse<Branch>>(`/organizations/${orgId}/branches`, {
+    params: { limit: 100 },
+  });
+  return data.data;
+}
+
+export async function createBranch(
+  orgId: string,
+  payload: Pick<Branch, 'name'> & Partial<Pick<Branch, 'address' | 'city' | 'country' | 'timezone' | 'phone' | 'email'>>,
+): Promise<Branch> {
+  const { data } = await api.post<Branch>(`/organizations/${orgId}/branches`, payload);
+  return data;
+}
+
+export async function updateBranch(
+  orgId: string,
+  branchId: string,
+  payload: Partial<Pick<Branch, 'name' | 'address' | 'city' | 'country' | 'timezone' | 'phone' | 'email' | 'is_active'>>,
+): Promise<Branch> {
+  const { data } = await api.put<Branch>(`/organizations/${orgId}/branches/${branchId}`, payload);
+  return data;
+}
+
+export async function deleteBranch(orgId: string, branchId: string): Promise<void> {
+  await api.delete(`/organizations/${orgId}/branches/${branchId}`);
+}
+
+export async function setDefaultBranch(orgId: string, branchId: string): Promise<Branch> {
+  const { data } = await api.post<Branch>(`/organizations/${orgId}/branches/${branchId}/set-default`);
+  return data;
 }
 
 export interface BookingSettings {
@@ -119,17 +211,21 @@ export function defaultWeekSchedule(): DaySchedule[] {
   }));
 }
 
-export async function getWorkingHours(orgId: string): Promise<DaySchedule[]> {
-  const { data } = await api.get<{ schedule: DaySchedule[] }>(`/organizations/${orgId}/schedule/working-hours`);
+export async function getWorkingHours(orgId: string, branchId?: string): Promise<DaySchedule[]> {
+  const params = branchId ? { branch_id: branchId } : undefined;
+  const { data } = await api.get<{ schedule: DaySchedule[] }>(`/organizations/${orgId}/schedule/working-hours`, {
+    params,
+  });
   const schedule = data.schedule ?? [];
   if (schedule.length === 0) return defaultWeekSchedule();
   const byDay = new Map(schedule.map((d) => [d.day_of_week, d]));
   return Array.from({ length: 7 }, (_, day) => byDay.get(day) ?? { day_of_week: day, slots: [] });
 }
 
-export async function saveWorkingHours(orgId: string, schedule: DaySchedule[]): Promise<DaySchedule[]> {
+export async function saveWorkingHours(orgId: string, schedule: DaySchedule[], branchId?: string): Promise<DaySchedule[]> {
   const { data } = await api.put<{ schedule: DaySchedule[] }>(`/organizations/${orgId}/schedule/working-hours`, {
     schedule,
+    ...(branchId ? { branch_id: branchId } : {}),
   });
   return data.schedule;
 }
@@ -149,6 +245,7 @@ export interface Customer {
 export interface Employee {
   id: string;
   organization_id: string;
+  branch_id: string;
   first_name: string;
   last_name: string;
   email?: string;
@@ -179,7 +276,27 @@ export async function uploadEmployeeAvatar(orgId: string, employeeId: string, fi
 export interface DeletionCheck {
   can_delete: boolean;
   bookings_count: number;
+  employees_count?: number;
   message?: string;
+}
+
+export async function listEmployees(orgId: string, branchId?: string | null): Promise<Employee[]> {
+  const params: Record<string, string | number> = { limit: 1000 };
+  if (branchId) params.branch_id = branchId;
+  const { data } = await api.get<PaginatedResponse<Employee>>(`/organizations/${orgId}/employees`, { params });
+  return data.data;
+}
+
+export async function listServices(orgId: string, branchId?: string | null): Promise<Service[]> {
+  const params: Record<string, string | number> = { limit: 1000 };
+  if (branchId) params.branch_id = branchId;
+  const { data } = await api.get<PaginatedResponse<Service>>(`/organizations/${orgId}/services`, { params });
+  return data.data;
+}
+
+export async function checkBranchDeletion(orgId: string, branchId: string): Promise<DeletionCheck> {
+  const { data } = await api.get<DeletionCheck>(`/organizations/${orgId}/branches/${branchId}/deletion-check`);
+  return data;
 }
 
 export async function checkServiceDeletion(orgId: string, serviceId: string): Promise<DeletionCheck> {
@@ -278,6 +395,7 @@ export interface Service {
 export interface Booking {
   id: string;
   organization_id: string;
+  branch_id: string;
   customer_id: string;
   employee_id: string;
   service_id: string;
@@ -290,13 +408,32 @@ export interface Booking {
   cancellation_reason?: string;
 }
 
+export type DashboardScope = 'organization' | 'branch';
+
+export interface MetricTrend {
+  previous: number;
+  change: number;
+  change_pct: number | null;
+}
+
+export interface DashboardTrends {
+  total_bookings: MetricTrend;
+  completed_bookings: MetricTrend;
+  revenue: MetricTrend;
+  new_customers: MetricTrend;
+}
+
 export interface DashboardStats {
+  scope: 'organization' | 'branch';
+  branch_id?: string;
+  branch_name?: string;
   total_bookings: number;
   completed_bookings: number;
   cancelled_bookings: number;
   no_show_bookings: number;
   revenue: number;
   new_customers: number;
+  trends: DashboardTrends;
   popular_services: Array<{ service_id: string; service_name: string; color?: string; count: number; revenue: number }>;
   busiest_days: Array<{ day: string; count: number }>;
   busiest_hours: Array<{ hour: number; count: number }>;

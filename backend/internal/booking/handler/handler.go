@@ -10,6 +10,7 @@ import (
 	"github.com/meetoria/meetoria/backend/internal/booking"
 	bookingservice "github.com/meetoria/meetoria/backend/internal/booking/service"
 	bookingrepo "github.com/meetoria/meetoria/backend/internal/booking/repository"
+	apperrors "github.com/meetoria/meetoria/backend/internal/common/errors"
 	commonmodel "github.com/meetoria/meetoria/backend/internal/common/model"
 	"github.com/meetoria/meetoria/backend/internal/organization"
 	orgservice "github.com/meetoria/meetoria/backend/internal/organization/service"
@@ -43,6 +44,14 @@ func (h *Handler) Create(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err)
 		return
+	}
+
+	if req.BranchID == nil || *req.BranchID == uuid.Nil {
+		if hdr := c.GetHeader("X-Branch-ID"); hdr != "" {
+			if id, err := uuid.Parse(hdr); err == nil {
+				req.BranchID = &id
+			}
+		}
 	}
 
 	correlationID := h.correlationID(c)
@@ -151,6 +160,12 @@ func (h *Handler) List(c *gin.Context) {
 	_ = c.ShouldBindQuery(&params)
 
 	filters := bookingrepo.ListFilters{}
+	if branchID, err := h.resolveBranchFilter(c); err != nil {
+		c.Error(err)
+		return
+	} else if branchID != nil {
+		filters.BranchID = branchID
+	}
 	if empID := c.Query("employee_id"); empID != "" {
 		id, _ := uuid.Parse(empID)
 		filters.EmployeeID = &id
@@ -238,6 +253,24 @@ func (h *Handler) SendEmail(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) resolveBranchFilter(c *gin.Context) (*uuid.UUID, error) {
+	if s := c.Query("branch_id"); s != "" {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return nil, apperrors.Validation("invalid branch_id")
+		}
+		return &id, nil
+	}
+	if s := c.GetHeader("X-Branch-ID"); s != "" {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return nil, apperrors.Validation("invalid X-Branch-ID header")
+		}
+		return &id, nil
+	}
+	return nil, nil
 }
 
 func (h *Handler) tenantContext(c *gin.Context) (uuid.UUID, *userservice.UserContext, error) {

@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	bookingrepo "github.com/meetoria/meetoria/backend/internal/booking/repository"
+	branchservice "github.com/meetoria/meetoria/backend/internal/branch/service"
 	apperrors "github.com/meetoria/meetoria/backend/internal/common/errors"
 	commonmodel "github.com/meetoria/meetoria/backend/internal/common/model"
 	svc "github.com/meetoria/meetoria/backend/internal/service"
@@ -21,16 +22,17 @@ type Service interface {
 	Update(ctx context.Context, orgID, id uuid.UUID, req svc.UpdateServiceRequest) (*svc.Service, error)
 	CheckDeletion(ctx context.Context, orgID, id uuid.UUID) (commonmodel.DeletionCheck, error)
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
-	List(ctx context.Context, orgID uuid.UUID, params commonmodel.PaginationParams, activeOnly bool) (commonmodel.PaginatedResponse[svc.Service], error)
+	List(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, params commonmodel.PaginationParams, activeOnly bool) (commonmodel.PaginatedResponse[svc.Service], error)
 }
 
 type serviceLayer struct {
-	repo        repository.Repository
-	bookingRepo bookingrepo.Repository
+	repo          repository.Repository
+	bookingRepo   bookingrepo.Repository
+	branchService branchservice.Service
 }
 
-func NewService(repo repository.Repository, bookingRepo bookingrepo.Repository) Service {
-	return &serviceLayer{repo: repo, bookingRepo: bookingRepo}
+func NewService(repo repository.Repository, bookingRepo bookingrepo.Repository, branchService branchservice.Service) Service {
+	return &serviceLayer{repo: repo, bookingRepo: bookingRepo, branchService: branchService}
 }
 
 func (s *serviceLayer) Create(ctx context.Context, orgID uuid.UUID, req svc.CreateServiceRequest, currency string) (*svc.Service, error) {
@@ -52,6 +54,15 @@ func (s *serviceLayer) Create(ctx context.Context, orgID uuid.UUID, req svc.Crea
 	if err := s.repo.Create(ctx, svcModel); err != nil {
 		return nil, apperrors.Internal("failed to create service", err)
 	}
+
+	branchID, err := s.branchService.ResolveBranchID(ctx, orgID, req.BranchID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.branchService.AddService(ctx, orgID, branchID, svcModel.ID); err != nil {
+		return nil, err
+	}
+
 	return svcModel, nil
 }
 
@@ -132,11 +143,24 @@ func (s *serviceLayer) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 	if err := s.repo.DeleteEmployeeServiceLinks(ctx, orgID, id); err != nil {
 		return apperrors.Internal("failed to remove employee service links", err)
 	}
+	if err := s.branchService.RemoveServiceLinks(ctx, orgID, id); err != nil {
+		return err
+	}
 	return s.repo.Delete(ctx, orgID, id)
 }
 
-func (s *serviceLayer) List(ctx context.Context, orgID uuid.UUID, params commonmodel.PaginationParams, activeOnly bool) (commonmodel.PaginatedResponse[svc.Service], error) {
-	services, total, err := s.repo.List(ctx, orgID, params.Offset(), params.Limit, activeOnly)
+func (s *serviceLayer) List(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, params commonmodel.PaginationParams, activeOnly bool) (commonmodel.PaginatedResponse[svc.Service], error) {
+	var (
+		services []svc.Service
+		total    int64
+		err      error
+	)
+
+	if branchID != nil {
+		services, total, err = s.repo.ListByBranch(ctx, orgID, *branchID, params.Offset(), params.Limit, activeOnly)
+	} else {
+		services, total, err = s.repo.List(ctx, orgID, params.Offset(), params.Limit, activeOnly)
+	}
 	if err != nil {
 		return commonmodel.PaginatedResponse[svc.Service]{}, apperrors.Internal("failed to list services", err)
 	}

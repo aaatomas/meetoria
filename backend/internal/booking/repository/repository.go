@@ -25,6 +25,7 @@ type Repository interface {
 }
 
 type ListFilters struct {
+	BranchID   *uuid.UUID
 	EmployeeID *uuid.UUID
 	CustomerID *uuid.UUID
 	Status     *booking.BookingStatus
@@ -74,6 +75,9 @@ func (r *gormRepository) List(ctx context.Context, orgID uuid.UUID, filters List
 	var total int64
 
 	query := r.scoped(ctx, orgID).Model(&booking.Booking{})
+	if filters.BranchID != nil {
+		query = query.Where("branch_id = ?", *filters.BranchID)
+	}
 	if filters.EmployeeID != nil {
 		query = query.Where("employee_id = ?", *filters.EmployeeID)
 	}

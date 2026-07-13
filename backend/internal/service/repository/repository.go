@@ -16,6 +16,7 @@ type Repository interface {
 	Update(ctx context.Context, s *service.Service) error
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
 	List(ctx context.Context, orgID uuid.UUID, offset, limit int, activeOnly bool) ([]service.Service, int64, error)
+	ListByBranch(ctx context.Context, orgID, branchID uuid.UUID, offset, limit int, activeOnly bool) ([]service.Service, int64, error)
 	UpdateCurrencyByOrg(ctx context.Context, orgID uuid.UUID, currency string) error
 	DeleteEmployeeServiceLinks(ctx context.Context, orgID, serviceID uuid.UUID) error
 }
@@ -67,6 +68,26 @@ func (r *gormRepository) List(ctx context.Context, orgID uuid.UUID, offset, limi
 	}
 
 	err := query.Order("name ASC").Offset(offset).Limit(limit).Find(&services).Error
+	return services, total, err
+}
+
+func (r *gormRepository) ListByBranch(ctx context.Context, orgID, branchID uuid.UUID, offset, limit int, activeOnly bool) ([]service.Service, int64, error) {
+	var services []service.Service
+	var total int64
+
+	query := r.db.WithContext(ctx).
+		Model(&service.Service{}).
+		Joins("JOIN branch_services bs ON bs.service_id = services.id AND bs.organization_id = services.organization_id").
+		Where("services.organization_id = ? AND bs.branch_id = ?", orgID, branchID)
+	if activeOnly {
+		query = query.Where("services.is_active = true")
+	}
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := query.Order("services.name ASC").Offset(offset).Limit(limit).Find(&services).Error
 	return services, total, err
 }
 

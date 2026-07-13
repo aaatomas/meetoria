@@ -21,6 +21,7 @@ const (
 
 type Booking struct {
 	commonmodel.OrganizationScoped
+	BranchID           uuid.UUID     `gorm:"type:uuid;not null;index" json:"branch_id"`
 	CustomerID         uuid.UUID     `gorm:"type:uuid;not null;index" json:"customer_id"`
 	EmployeeID         uuid.UUID     `gorm:"type:uuid;not null;index" json:"employee_id"`
 	ServiceID          uuid.UUID     `gorm:"type:uuid;not null;index" json:"service_id"`
@@ -34,7 +35,8 @@ type Booking struct {
 }
 
 type CreateBookingRequest struct {
-	CustomerID uuid.UUID `json:"customer_id" binding:"required"`
+	BranchID   *uuid.UUID `json:"branch_id"`
+	CustomerID uuid.UUID  `json:"customer_id" binding:"required"`
 	EmployeeID uuid.UUID `json:"employee_id" binding:"required"`
 	ServiceID  uuid.UUID `json:"service_id" binding:"required"`
 	StartTime  time.Time `json:"start_time" binding:"required"`
@@ -55,7 +57,8 @@ type CancelBookingRequest struct {
 }
 
 type AvailabilityRequest struct {
-	EmployeeID uuid.UUID `form:"employee_id" binding:"required"`
+	BranchID   *uuid.UUID `form:"branch_id"`
+	EmployeeID uuid.UUID  `form:"employee_id" binding:"required"`
 	ServiceID  uuid.UUID `form:"service_id" binding:"required"`
 	Date       string    `form:"date" binding:"required"`
 }

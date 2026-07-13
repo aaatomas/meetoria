@@ -19,6 +19,13 @@ type OrganizationScoped struct {
 	OrganizationID uuid.UUID `gorm:"type:uuid;not null;index" json:"organization_id"`
 }
 
+// OrganizationJunction is for join tables that only store id, organization_id, and created_at.
+type OrganizationJunction struct {
+	ID             uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	OrganizationID uuid.UUID `gorm:"type:uuid;not null;index" json:"organization_id"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
 type PaginationParams struct {
 	Page  int `form:"page"`
 	Limit int `form:"limit"`

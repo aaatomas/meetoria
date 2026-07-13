@@ -9,6 +9,9 @@ import (
 	"github.com/meetoria/meetoria/backend/internal/auth/middleware"
 	"github.com/meetoria/meetoria/backend/internal/booking"
 	bookingservice "github.com/meetoria/meetoria/backend/internal/booking/service"
+	"github.com/meetoria/meetoria/backend/internal/branch"
+	branchrepo "github.com/meetoria/meetoria/backend/internal/branch/repository"
+	branchservice "github.com/meetoria/meetoria/backend/internal/branch/service"
 	apperrors "github.com/meetoria/meetoria/backend/internal/common/errors"
 	"github.com/meetoria/meetoria/backend/internal/employee"
 	employeerepo "github.com/meetoria/meetoria/backend/internal/employee/repository"
@@ -20,6 +23,8 @@ import (
 type PublicHandler struct {
 	bookingService bookingservice.Service
 	orgService     orgservice.Service
+	branchService  branchservice.Service
+	branchRepo     branchrepo.Repository
 	serviceRepo    servicerepo.Repository
 	employeeRepo   employeerepo.Repository
 }
@@ -27,12 +32,16 @@ type PublicHandler struct {
 func NewPublicHandler(
 	bookingService bookingservice.Service,
 	orgService orgservice.Service,
+	branchService branchservice.Service,
+	branchRepo branchrepo.Repository,
 	serviceRepo servicerepo.Repository,
 	employeeRepo employeerepo.Repository,
 ) *PublicHandler {
 	return &PublicHandler{
 		bookingService: bookingService,
 		orgService:     orgService,
+		branchService:  branchService,
+		branchRepo:     branchRepo,
 		serviceRepo:    serviceRepo,
 		employeeRepo:   employeeRepo,
 	}
@@ -62,6 +71,34 @@ func (h *PublicHandler) GetOrganization(c *gin.Context) {
 	})
 }
 
+func (h *PublicHandler) ListBranches(c *gin.Context) {
+	org, err := h.resolvePublicOrg(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
+	branches, _, err := h.branchRepo.List(c.Request.Context(), org.ID, 0, 1000, true)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
+	publicBranches := make([]branch.PublicBranch, len(branches))
+	for i, b := range branches {
+		publicBranches[i] = branch.PublicBranch{
+			ID:      b.ID,
+			Name:    b.Name,
+			Address: b.Address,
+			City:    b.City,
+			Country: b.Country,
+			Phone:   b.Phone,
+		}
+	}
+
+	c.JSON(http.StatusOK, publicBranches)
+}
+
 func (h *PublicHandler) ListServices(c *gin.Context) {
 	org, err := h.resolvePublicOrg(c)
 	if err != nil {
@@ -69,10 +106,33 @@ func (h *PublicHandler) ListServices(c *gin.Context) {
 		return
 	}
 
-	services, _, err := h.serviceRepo.List(c.Request.Context(), org.ID, 0, 1000, true)
+	branchIDStr := c.Query("branch_id")
+	if branchIDStr == "" {
+		c.Error(apperrors.Validation("branch_id is required"))
+		return
+	}
+	branchID, err := uuid.Parse(branchIDStr)
+	if err != nil {
+		c.Error(apperrors.Validation("invalid branch_id"))
+		return
+	}
+
+	if _, err := h.branchService.GetByID(c.Request.Context(), org.ID, branchID); err != nil {
+		c.Error(err)
+		return
+	}
+
+	services, _, err := h.serviceRepo.ListByBranch(c.Request.Context(), org.ID, branchID, 0, 1000, true)
 	if err != nil {
 		c.Error(err)
 		return
+	}
+	if len(services) == 0 {
+		services, _, err = h.serviceRepo.List(c.Request.Context(), org.ID, 0, 1000, true)
+		if err != nil {
+			c.Error(err)
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, services)
@@ -82,6 +142,17 @@ func (h *PublicHandler) ListEmployees(c *gin.Context) {
 	org, err := h.resolvePublicOrg(c)
 	if err != nil {
 		c.Error(err)
+		return
+	}
+
+	branchIDStr := c.Query("branch_id")
+	if branchIDStr == "" {
+		c.Error(apperrors.Validation("branch_id is required"))
+		return
+	}
+	branchID, err := uuid.Parse(branchIDStr)
+	if err != nil {
+		c.Error(apperrors.Validation("invalid branch_id"))
 		return
 	}
 
@@ -96,13 +167,18 @@ func (h *PublicHandler) ListEmployees(c *gin.Context) {
 		return
 	}
 
-	employees, err := h.employeeRepo.ListByService(c.Request.Context(), org.ID, serviceID)
+	if _, err := h.branchService.GetByID(c.Request.Context(), org.ID, branchID); err != nil {
+		c.Error(err)
+		return
+	}
+
+	employees, err := h.employeeRepo.ListByBranchAndService(c.Request.Context(), org.ID, branchID, serviceID)
 	if err != nil {
 		c.Error(err)
 		return
 	}
 	if len(employees) == 0 {
-		all, _, err := h.employeeRepo.List(c.Request.Context(), org.ID, 0, 1000, true)
+		all, _, err := h.employeeRepo.List(c.Request.Context(), org.ID, &branchID, 0, 1000, true)
 		if err != nil {
 			c.Error(err)
 			return

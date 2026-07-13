@@ -15,6 +15,7 @@ import {
 } from '@mui/material/colors';
 import type { SchedulerEventColor } from '@mui/x-scheduler/models';
 import type { PopularService } from '../../api/client';
+import { formatPrice } from '../../utils/formatCurrency';
 import { SERVICE_EVENT_COLORS } from '../../constants/schedulerColors';
 
 const COLOR_SWATCHES: Record<SchedulerEventColor, string> = {
@@ -33,9 +34,10 @@ const COLOR_SWATCHES: Record<SchedulerEventColor, string> = {
 
 interface PopularServicesListProps {
   services: PopularService[];
+  currency?: string;
 }
 
-export function PopularServicesList({ services }: PopularServicesListProps) {
+export function PopularServicesList({ services, currency = 'EUR' }: PopularServicesListProps) {
   const theme = useTheme();
 
   if (!services.length) {
@@ -86,7 +88,7 @@ export function PopularServicesList({ services }: PopularServicesListProps) {
                 fontWeight={600}
                 sx={{ flexShrink: 0, minWidth: 72, textAlign: 'right' }}
               >
-                €{service.revenue.toFixed(0)}
+                {formatPrice(service.revenue, currency)}
               </Typography>
             </Box>
             <Box

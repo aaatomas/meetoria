@@ -25,6 +25,15 @@ export interface PublicOrganization {
   time_format: '24h' | '12h';
 }
 
+export interface PublicBranch {
+  id: string;
+  name: string;
+  address?: string;
+  city?: string;
+  country?: string;
+  phone?: string;
+}
+
 export interface PublicService {
   id: string;
   name: string;
@@ -68,6 +77,7 @@ export interface PublicCustomerInfo {
 }
 
 export interface CreatePublicBookingRequest {
+  branch_id: string;
   service_id: string;
   employee_id?: string;
   start_time: string;
@@ -80,21 +90,28 @@ export async function getPublicOrganization(slug: string): Promise<PublicOrganiz
   return data;
 }
 
-export async function getPublicServices(slug: string): Promise<PublicService[]> {
-  const { data } = await publicApi.get<PublicService[]>(`/${slug}/services`);
+export async function getPublicBranches(slug: string): Promise<PublicBranch[]> {
+  const { data } = await publicApi.get<PublicBranch[]>(`/${slug}/branches`);
   return data;
 }
 
-export async function getPublicEmployees(slug: string, serviceId: string): Promise<PublicEmployee[]> {
+export async function getPublicServices(slug: string, branchId: string): Promise<PublicService[]> {
+  const { data } = await publicApi.get<PublicService[]>(`/${slug}/services`, {
+    params: { branch_id: branchId },
+  });
+  return data;
+}
+
+export async function getPublicEmployees(slug: string, branchId: string, serviceId: string): Promise<PublicEmployee[]> {
   const { data } = await publicApi.get<PublicEmployee[]>(`/${slug}/employees`, {
-    params: { service_id: serviceId },
+    params: { branch_id: branchId, service_id: serviceId },
   });
   return data;
 }
 
 export async function getPublicAvailability(
   slug: string,
-  params: { service_id: string; date: string; employee_id?: string },
+  params: { branch_id: string; service_id: string; date: string; employee_id?: string },
 ): Promise<PublicTimeSlot[]> {
   const { data } = await publicApi.get<PublicTimeSlot[]>(`/${slug}/availability`, { params });
   return data;

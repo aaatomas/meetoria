@@ -14,6 +14,7 @@ type PublicCustomerInfo struct {
 }
 
 type PublicCreateBookingRequest struct {
+	BranchID   uuid.UUID          `json:"branch_id" binding:"required"`
 	ServiceID  uuid.UUID          `json:"service_id" binding:"required"`
 	EmployeeID *uuid.UUID         `json:"employee_id"`
 	StartTime  time.Time          `json:"start_time" binding:"required"`
@@ -22,9 +23,14 @@ type PublicCreateBookingRequest struct {
 }
 
 type PublicAvailabilityRequest struct {
+	BranchID   string `form:"branch_id" binding:"required"`
 	ServiceID  string `form:"service_id" binding:"required"`
 	EmployeeID string `form:"employee_id"`
 	Date       string `form:"date" binding:"required"`
+}
+
+func (r PublicAvailabilityRequest) ParsedBranchID() (uuid.UUID, error) {
+	return uuid.Parse(r.BranchID)
 }
 
 func (r PublicAvailabilityRequest) ParsedServiceID() (uuid.UUID, error) {

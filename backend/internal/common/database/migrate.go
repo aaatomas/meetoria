@@ -66,18 +66,24 @@ func Migrate(db *gorm.DB, dir string) error {
 		}
 	}
 
+	if err := linkExistingBranchServices(db); err != nil {
+		return fmt.Errorf("link branch services: %w", err)
+	}
+
 	return nil
 }
 
-func bootstrapExisting(db *gorm.DB) error {
-	var count int64
-	if err := db.Raw("SELECT COUNT(*) FROM schema_migrations").Scan(&count).Error; err != nil {
-		return fmt.Errorf("count schema_migrations: %w", err)
-	}
-	if count > 0 {
-		return nil
-	}
+func linkExistingBranchServices(db *gorm.DB) error {
+	return db.Exec(`
+		INSERT INTO branch_services (organization_id, branch_id, service_id)
+		SELECT s.organization_id, b.id, s.id
+		FROM services s
+		JOIN branches b ON b.organization_id = s.organization_id AND b.is_default = true
+		ON CONFLICT (branch_id, service_id) DO NOTHING
+	`).Error
+}
 
+func bootstrapExisting(db *gorm.DB) error {
 	var exists bool
 	if err := db.Raw(`
 		SELECT EXISTS (
@@ -90,17 +96,19 @@ func bootstrapExisting(db *gorm.DB) error {
 		return nil
 	}
 
-	for _, version := range []string{
-		"000_extensions.sql",
-		"001_initial_schema.sql",
-		"002_service_color.sql",
-	} {
-		if err := db.Exec(
-			"INSERT INTO schema_migrations (version) VALUES (?) ON CONFLICT DO NOTHING",
-			version,
-		).Error; err != nil {
-			return fmt.Errorf("bootstrap migration %q: %w", version, err)
-		}
+	applied, err := isMigrationApplied(db, "001_schema.sql")
+	if err != nil {
+		return err
+	}
+	if applied {
+		return nil
+	}
+
+	if err := db.Exec(
+		"INSERT INTO schema_migrations (version) VALUES (?)",
+		"001_schema.sql",
+	).Error; err != nil {
+		return fmt.Errorf("bootstrap migration %q: %w", "001_schema.sql", err)
 	}
 
 	return nil

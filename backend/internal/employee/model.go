@@ -8,6 +8,7 @@ import (
 
 type Employee struct {
 	commonmodel.OrganizationScoped
+	BranchID  uuid.UUID  `gorm:"type:uuid;not null;index" json:"branch_id"`
 	UserID    *uuid.UUID `gorm:"type:uuid;index" json:"user_id,omitempty"`
 	FirstName string     `gorm:"size:100;not null" json:"first_name"`
 	LastName  string     `gorm:"size:100;not null" json:"last_name"`
@@ -21,6 +22,7 @@ type Employee struct {
 }
 
 type CreateEmployeeRequest struct {
+	BranchID   *uuid.UUID  `json:"branch_id"`
 	FirstName  string      `json:"first_name" binding:"required,min=1,max=100"`
 	LastName   string      `json:"last_name" binding:"required,min=1,max=100"`
 	Email      string      `json:"email" binding:"omitempty,email"`
@@ -32,7 +34,8 @@ type CreateEmployeeRequest struct {
 }
 
 type UpdateEmployeeRequest struct {
-	FirstName *string `json:"first_name" binding:"omitempty,min=1,max=100"`
+	BranchID  *uuid.UUID `json:"branch_id"`
+	FirstName *string    `json:"first_name" binding:"omitempty,min=1,max=100"`
 	LastName  *string `json:"last_name" binding:"omitempty,min=1,max=100"`
 	Email     *string `json:"email" binding:"omitempty,email"`
 	Phone     *string `json:"phone" binding:"omitempty,e164"`
@@ -43,7 +46,7 @@ type UpdateEmployeeRequest struct {
 }
 
 type EmployeeService struct {
-	commonmodel.OrganizationScoped
+	commonmodel.OrganizationJunction
 	EmployeeID uuid.UUID `gorm:"type:uuid;not null" json:"employee_id"`
 	ServiceID  uuid.UUID `gorm:"type:uuid;not null" json:"service_id"`
 }

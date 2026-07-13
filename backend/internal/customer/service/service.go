@@ -14,6 +14,7 @@ import (
 	"github.com/meetoria/meetoria/backend/internal/customer"
 	"github.com/meetoria/meetoria/backend/internal/customer/repository"
 	notifservice "github.com/meetoria/meetoria/backend/internal/notification/service"
+	"github.com/meetoria/meetoria/backend/pkg/phone"
 )
 
 type Service interface {
@@ -43,13 +44,18 @@ func NewService(repo repository.Repository, bookingRepo bookingrepo.Repository, 
 }
 
 func (s *customerService) Create(ctx context.Context, orgID uuid.UUID, req customer.CreateCustomerRequest) (*customer.Customer, error) {
+	phoneValue, err := phone.NormalizeOptional(req.Phone)
+	if err != nil {
+		return nil, err
+	}
+
 	c := &customer.Customer{
 		OrganizationScoped: commonmodel.OrganizationScoped{OrganizationID: orgID},
 		UserID:             req.UserID,
 		FirstName:          req.FirstName,
 		LastName:           req.LastName,
 		Email:              req.Email,
-		Phone:              req.Phone,
+		Phone:              phoneValue,
 		Notes:              req.Notes,
 	}
 
@@ -120,7 +126,15 @@ func (s *customerService) Update(ctx context.Context, orgID, id uuid.UUID, req c
 		c.Email = *req.Email
 	}
 	if req.Phone != nil {
-		c.Phone = *req.Phone
+		phoneValue, err := phone.NormalizeOptionalPtr(req.Phone)
+		if err != nil {
+			return nil, err
+		}
+		if phoneValue != nil {
+			c.Phone = *phoneValue
+		} else {
+			c.Phone = ""
+		}
 	}
 	if req.Notes != nil {
 		c.Notes = *req.Notes

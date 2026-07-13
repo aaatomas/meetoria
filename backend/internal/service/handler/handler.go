@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/meetoria/meetoria/backend/internal/auth/middleware"
+	apperrors "github.com/meetoria/meetoria/backend/internal/common/errors"
 	commonmodel "github.com/meetoria/meetoria/backend/internal/common/model"
 	"github.com/meetoria/meetoria/backend/internal/organization"
 	orgservice "github.com/meetoria/meetoria/backend/internal/organization/service"
@@ -42,6 +43,14 @@ func (h *Handler) Create(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err)
 		return
+	}
+
+	if req.BranchID == nil || *req.BranchID == uuid.Nil {
+		if hdr := c.GetHeader("X-Branch-ID"); hdr != "" {
+			if id, err := uuid.Parse(hdr); err == nil {
+				req.BranchID = &id
+			}
+		}
 	}
 
 	org, err := h.orgService.GetByID(c.Request.Context(), orgID)
@@ -170,13 +179,37 @@ func (h *Handler) List(c *gin.Context) {
 	_ = c.ShouldBindQuery(&params)
 	activeOnly := c.Query("active_only") == "true"
 
-	result, err := h.serviceService.List(c.Request.Context(), orgID, params, activeOnly)
+	branchID, err := h.resolveBranchFilter(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
+	result, err := h.serviceService.List(c.Request.Context(), orgID, branchID, params, activeOnly)
 	if err != nil {
 		c.Error(err)
 		return
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+func (h *Handler) resolveBranchFilter(c *gin.Context) (*uuid.UUID, error) {
+	if s := c.Query("branch_id"); s != "" {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return nil, apperrors.Validation("invalid branch_id")
+		}
+		return &id, nil
+	}
+	if s := c.GetHeader("X-Branch-ID"); s != "" {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return nil, apperrors.Validation("invalid X-Branch-ID header")
+		}
+		return &id, nil
+	}
+	return nil, nil
 }
 
 func (h *Handler) tenantContext(c *gin.Context) (uuid.UUID, *userservice.UserContext, error) {

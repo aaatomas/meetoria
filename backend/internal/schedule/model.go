@@ -10,6 +10,7 @@ import (
 
 type WorkingHours struct {
 	commonmodel.OrganizationScoped
+	BranchID   *uuid.UUID `gorm:"type:uuid;index" json:"branch_id,omitempty"`
 	EmployeeID *uuid.UUID `gorm:"type:uuid;index" json:"employee_id,omitempty"`
 	DayOfWeek  int        `gorm:"not null" json:"day_of_week"`
 	StartTime  ClockTime  `gorm:"type:time;not null" json:"start_time"`
@@ -34,6 +35,7 @@ type Holiday struct {
 }
 
 type SetWorkingHoursRequest struct {
+	BranchID   *uuid.UUID    `json:"branch_id"`
 	EmployeeID *uuid.UUID    `json:"employee_id"`
 	Schedule   []DaySchedule `json:"schedule" binding:"required"`
 }

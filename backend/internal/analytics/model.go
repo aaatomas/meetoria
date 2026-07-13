@@ -57,16 +57,33 @@ func (CustomerStats) TableName() string {
 }
 
 type DashboardResponse struct {
+	Scope             string             `json:"scope"`
+	BranchID          *uuid.UUID         `json:"branch_id,omitempty"`
+	BranchName        string             `json:"branch_name,omitempty"`
 	TotalBookings     int                `json:"total_bookings"`
 	CompletedBookings int                `json:"completed_bookings"`
 	CancelledBookings int                `json:"cancelled_bookings"`
 	NoShowBookings    int                `json:"no_show_bookings"`
 	Revenue           float64            `json:"revenue"`
 	NewCustomers      int                `json:"new_customers"`
+	Trends            DashboardTrends    `json:"trends"`
 	PopularServices   []PopularService   `json:"popular_services"`
 	BusiestDays       []DayCount         `json:"busiest_days"`
 	BusiestHours      []HourCount        `json:"busiest_hours"`
 	HourlyHeatmap     [][]HeatmapCell    `json:"hourly_heatmap"`
+}
+
+type DashboardTrends struct {
+	TotalBookings     MetricTrend `json:"total_bookings"`
+	CompletedBookings MetricTrend `json:"completed_bookings"`
+	Revenue           MetricTrend `json:"revenue"`
+	NewCustomers      MetricTrend `json:"new_customers"`
+}
+
+type MetricTrend struct {
+	Previous  float64  `json:"previous"`
+	Change    float64  `json:"change"`
+	ChangePct *float64 `json:"change_pct"`
 }
 
 type LiveDashboardSummary struct {

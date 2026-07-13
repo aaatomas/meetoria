@@ -20,14 +20,15 @@ func FormatClockTime(t time.Time) string {
 	return t.Format("15:04")
 }
 
-// DefaultOrgWorkingHours returns Mon–Fri 09:00–17:00 org-wide hours.
-func DefaultOrgWorkingHours(orgID uuid.UUID) []WorkingHours {
+// DefaultBranchWorkingHours returns Mon–Fri 09:00–17:00 for a branch.
+func DefaultBranchWorkingHours(orgID, branchID uuid.UUID) []WorkingHours {
 	start, _ := NewClockTimeFromString("09:00")
 	end, _ := NewClockTimeFromString("17:00")
 	var hours []WorkingHours
 	for day := 1; day <= 5; day++ {
 		hours = append(hours, WorkingHours{
 			OrganizationScoped: commonmodel.OrganizationScoped{OrganizationID: orgID},
+			BranchID:           &branchID,
 			DayOfWeek:          day,
 			StartTime:          start,
 			EndTime:            end,

@@ -40,12 +40,14 @@ import {
   updateCustomer,
 } from '../api/client';
 import { ConfirmDeleteDialog } from '../components/common/ConfirmDeleteDialog';
+import { PhoneField } from '../components/common/PhoneField';
+import { formatPhoneDisplay, optionalPhoneField } from '../utils/phoneUtils';
 
 const schema = z.object({
   first_name: z.string().min(1),
   last_name: z.string().min(1),
   email: z.string().email().optional().or(z.literal('')),
-  phone: z.string().optional(),
+  phone: optionalPhoneField,
   notes: z.string().optional(),
 });
 
@@ -101,7 +103,7 @@ export function CustomersPage() {
       first_name: customer.first_name,
       last_name: customer.last_name,
       email: customer.email ?? '',
-      phone: customer.phone ?? '',
+      phone: customer.phone ? formatPhoneDisplay(customer.phone) : '',
       notes: customer.notes ?? '',
     });
     setOpen(true);
@@ -204,7 +206,7 @@ export function CustomersPage() {
                 <TableRow key={c.id}>
                   <TableCell>{c.first_name} {c.last_name}</TableCell>
                   <TableCell>{c.email || '—'}</TableCell>
-                  <TableCell>{c.phone || '—'}</TableCell>
+                  <TableCell>{c.phone ? formatPhoneDisplay(c.phone) : '—'}</TableCell>
                   <TableCell align="right">{c.bookings_count ?? 0}</TableCell>
                   <TableCell align="right">{c.cancellations_count ?? 0}</TableCell>
                   <TableCell align="right">
@@ -287,7 +289,15 @@ export function CustomersPage() {
               <Controller name="first_name" control={control} render={({ field }) => <TextField {...field} label="First Name" fullWidth required />} />
               <Controller name="last_name" control={control} render={({ field }) => <TextField {...field} label="Last Name" fullWidth required />} />
               <Controller name="email" control={control} render={({ field }) => <TextField {...field} label="Email" type="email" fullWidth />} />
-              <Controller name="phone" control={control} render={({ field }) => <TextField {...field} label="Phone (E.164)" placeholder="+37060000000" fullWidth />} />
+              <Controller name="phone" control={control} render={({ field, fieldState }) => (
+                <PhoneField
+                  {...field}
+                  label="Phone"
+                  fullWidth
+                  error={!!fieldState.error}
+                  helperText={fieldState.error?.message}
+                />
+              )} />
               <Controller name="notes" control={control} render={({ field }) => <TextField {...field} label="Notes" multiline rows={2} fullWidth />} />
             </Stack>
           </DialogContent>

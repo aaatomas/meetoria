@@ -11,9 +11,9 @@ import (
 )
 
 type Repository interface {
-	SetWorkingHours(ctx context.Context, orgID uuid.UUID, employeeID *uuid.UUID, hours []schedule.WorkingHours) error
-	GetWorkingHours(ctx context.Context, orgID uuid.UUID, employeeID uuid.UUID, dayOfWeek int) ([]schedule.WorkingHours, error)
-	ListOrgWorkingHours(ctx context.Context, orgID uuid.UUID) ([]schedule.WorkingHours, error)
+	SetWorkingHours(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, employeeID *uuid.UUID, hours []schedule.WorkingHours) error
+	GetWorkingHours(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, employeeID uuid.UUID, dayOfWeek int) ([]schedule.WorkingHours, error)
+	ListBranchWorkingHours(ctx context.Context, orgID uuid.UUID, branchID uuid.UUID) ([]schedule.WorkingHours, error)
 	GetBreaks(ctx context.Context, orgID uuid.UUID, employeeID uuid.UUID, dayOfWeek int) ([]schedule.Break, error)
 	CreateHoliday(ctx context.Context, h *schedule.Holiday) error
 	ListHolidays(ctx context.Context, orgID uuid.UUID, employeeID *uuid.UUID, from, to time.Time) ([]schedule.Holiday, error)
@@ -28,9 +28,14 @@ func NewRepository(db *gorm.DB) Repository {
 	return &gormRepository{db: db}
 }
 
-func (r *gormRepository) SetWorkingHours(ctx context.Context, orgID uuid.UUID, employeeID *uuid.UUID, hours []schedule.WorkingHours) error {
+func (r *gormRepository) SetWorkingHours(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, employeeID *uuid.UUID, hours []schedule.WorkingHours) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		query := tx.Where("organization_id = ?", orgID)
+		if branchID != nil {
+			query = query.Where("branch_id = ?", *branchID)
+		} else {
+			query = query.Where("branch_id IS NULL")
+		}
 		if employeeID != nil {
 			query = query.Where("employee_id = ?", *employeeID)
 		} else {
@@ -48,29 +53,36 @@ func (r *gormRepository) SetWorkingHours(ctx context.Context, orgID uuid.UUID, e
 	})
 }
 
-func (r *gormRepository) GetWorkingHours(ctx context.Context, orgID uuid.UUID, employeeID uuid.UUID, dayOfWeek int) ([]schedule.WorkingHours, error) {
+func (r *gormRepository) GetWorkingHours(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, employeeID uuid.UUID, dayOfWeek int) ([]schedule.WorkingHours, error) {
 	var hours []schedule.WorkingHours
 
-	err := r.db.WithContext(ctx).
-		Where("organization_id = ? AND employee_id = ? AND day_of_week = ? AND is_active = true", orgID, employeeID, dayOfWeek).
-		Find(&hours).Error
-	if err != nil {
+	employeeQuery := r.db.WithContext(ctx).
+		Where("organization_id = ? AND employee_id = ? AND day_of_week = ? AND is_active = true", orgID, employeeID, dayOfWeek)
+	if branchID != nil {
+		employeeQuery = employeeQuery.Where("branch_id = ?", *branchID)
+	}
+	if err := employeeQuery.Find(&hours).Error; err != nil {
 		return nil, err
 	}
 	if len(hours) > 0 {
 		return hours, nil
 	}
 
-	err = r.db.WithContext(ctx).
-		Where("organization_id = ? AND employee_id IS NULL AND day_of_week = ? AND is_active = true", orgID, dayOfWeek).
-		Find(&hours).Error
-	return hours, err
+	branchQuery := r.db.WithContext(ctx).
+		Where("organization_id = ? AND employee_id IS NULL AND day_of_week = ? AND is_active = true", orgID, dayOfWeek)
+	if branchID != nil {
+		branchQuery = branchQuery.Where("branch_id = ?", *branchID)
+	}
+	if err := branchQuery.Find(&hours).Error; err != nil {
+		return nil, err
+	}
+	return hours, nil
 }
 
-func (r *gormRepository) ListOrgWorkingHours(ctx context.Context, orgID uuid.UUID) ([]schedule.WorkingHours, error) {
+func (r *gormRepository) ListBranchWorkingHours(ctx context.Context, orgID uuid.UUID, branchID uuid.UUID) ([]schedule.WorkingHours, error) {
 	var hours []schedule.WorkingHours
 	err := r.db.WithContext(ctx).
-		Where("organization_id = ? AND employee_id IS NULL AND is_active = true", orgID).
+		Where("organization_id = ? AND branch_id = ? AND employee_id IS NULL AND is_active = true", orgID, branchID).
 		Order("day_of_week ASC, start_time ASC").
 		Find(&hours).Error
 	return hours, err

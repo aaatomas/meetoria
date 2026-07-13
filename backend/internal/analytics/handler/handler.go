@@ -9,6 +9,8 @@ import (
 
 	analyticsservice "github.com/meetoria/meetoria/backend/internal/analytics/service"
 	"github.com/meetoria/meetoria/backend/internal/auth/middleware"
+	branchservice "github.com/meetoria/meetoria/backend/internal/branch/service"
+	apperrors "github.com/meetoria/meetoria/backend/internal/common/errors"
 	"github.com/meetoria/meetoria/backend/internal/organization"
 	orgservice "github.com/meetoria/meetoria/backend/internal/organization/service"
 	userservice "github.com/meetoria/meetoria/backend/internal/user/service"
@@ -17,11 +19,22 @@ import (
 type Handler struct {
 	analyticsService analyticsservice.Service
 	orgService       orgservice.Service
+	branchService    branchservice.Service
 	userService      userservice.Service
 }
 
-func NewHandler(analyticsService analyticsservice.Service, orgService orgservice.Service, userService userservice.Service) *Handler {
-	return &Handler{analyticsService: analyticsService, orgService: orgService, userService: userService}
+func NewHandler(
+	analyticsService analyticsservice.Service,
+	orgService orgservice.Service,
+	branchService branchservice.Service,
+	userService userservice.Service,
+) *Handler {
+	return &Handler{
+		analyticsService: analyticsService,
+		orgService:       orgService,
+		branchService:    branchService,
+		userService:      userService,
+	}
 }
 
 func (h *Handler) GetDashboard(c *gin.Context) {
@@ -37,12 +50,25 @@ func (h *Handler) GetDashboard(c *gin.Context) {
 		return
 	}
 
-	from, to := h.parseDateRange(c)
-
-	dashboard, err := h.analyticsService.GetDashboard(c.Request.Context(), orgID, from, to)
+	branchID, err := h.resolveBranchFilter(c)
 	if err != nil {
 		c.Error(err)
 		return
+	}
+
+	from, to := h.parseDateRange(c)
+
+	dashboard, err := h.analyticsService.GetDashboard(c.Request.Context(), orgID, branchID, from, to)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
+	if branchID != nil {
+		branch, branchErr := h.branchService.GetByID(c.Request.Context(), orgID, *branchID)
+		if branchErr == nil {
+			dashboard.BranchName = branch.Name
+		}
 	}
 
 	c.JSON(http.StatusOK, dashboard)
@@ -93,6 +119,28 @@ func (h *Handler) GetCustomerAnalytics(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, stats)
+}
+
+func (h *Handler) resolveBranchFilter(c *gin.Context) (*uuid.UUID, error) {
+	if c.Query("scope") == "organization" {
+		return nil, nil
+	}
+
+	if s := c.Query("branch_id"); s != "" {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return nil, apperrors.Validation("invalid branch_id")
+		}
+		return &id, nil
+	}
+	if s := c.GetHeader("X-Branch-ID"); s != "" {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return nil, apperrors.Validation("invalid X-Branch-ID header")
+		}
+		return &id, nil
+	}
+	return nil, nil
 }
 
 func (h *Handler) tenantContext(c *gin.Context) (uuid.UUID, *userservice.UserContext, error) {

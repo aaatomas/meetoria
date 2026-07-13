@@ -109,6 +109,23 @@ export const theme = createTheme({
         sidePanel: ({ theme }) => ({
           backgroundColor: theme.palette.background.default,
         }),
+        resourcesTreeLabel: {
+          fontWeight: 700,
+          fontSize: '0.8125rem',
+          letterSpacing: '0.02em',
+          px: 1.5,
+          pt: 1,
+        },
+        resourcesTreeItem: ({ theme }) => ({
+          borderRadius: 8,
+          mx: 0.75,
+          '&:hover': {
+            backgroundColor: theme.palette.action.hover,
+          },
+        }),
+        resourcesTreeItemCheckbox: {
+          p: 0.5,
+        },
         dayTimeGridAllDayEventsCell: {
           display: 'none',
         },

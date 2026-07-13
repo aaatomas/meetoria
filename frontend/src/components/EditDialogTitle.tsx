@@ -4,12 +4,14 @@ import { Controller, type Control, type FieldPath, type FieldValues } from 'reac
 interface EditDialogTitleProps<T extends FieldValues> {
   title: string;
   showActive?: boolean;
+  activeDisabled?: boolean;
   control: Control<T>;
 }
 
 export function EditDialogTitle<T extends FieldValues>({
   title,
   showActive = false,
+  activeDisabled = false,
   control,
 }: EditDialogTitleProps<T>) {
   return (
@@ -30,7 +32,13 @@ export function EditDialogTitle<T extends FieldValues>({
           control={control}
           render={({ field }) => (
             <FormControlLabel
-              control={<Switch checked={Boolean(field.value)} onChange={field.onChange} />}
+              control={
+                <Switch
+                  checked={Boolean(field.value)}
+                  onChange={field.onChange}
+                  disabled={activeDisabled}
+                />
+              }
               label="Active"
               labelPlacement="start"
               sx={{ mr: 0, flexShrink: 0 }}

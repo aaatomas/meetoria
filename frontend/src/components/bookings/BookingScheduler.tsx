@@ -2,13 +2,13 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { Box, CircularProgress, Typography } from '@mui/material';
 import { EventCalendar } from '@mui/x-scheduler/event-calendar';
 import type { SchedulerEvent } from '@mui/x-scheduler/models';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, Booking, Customer, Employee, Service, getApiErrorMessage, getWorkingHours } from '../../api/client';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { api, Booking, Customer, Employee, Service, getApiErrorMessage } from '../../api/client';
 import {
   buildSchedulerEvents,
   buildSchedulerResources,
   findScheduleChanges,
-  getSchedulerHourRange,
+  FULL_SCHEDULER_HOUR_RANGE,
   MeetoriaSchedulerEvent,
 } from './bookingSchedulerUtils';
 import { useSchedulerResourceAvatars } from './useSchedulerResourceAvatars';
@@ -18,11 +18,13 @@ import {
   useSchedulerResourceFilterActions,
 } from './useSchedulerResourceFilterActions';
 import { useSchedulerEventClick } from './useSchedulerEventClick';
+import { useSchedulerScrollToNow } from './useSchedulerScrollToNow';
 import { BookingEventDialog, EditBookingForm } from './BookingEventDialog';
 import { bookingSchedulerLocaleText } from './bookingSchedulerLocale';
 
 interface BookingSchedulerProps {
   orgId: string;
+  branchId?: string | null;
   currency: string;
   timeFormat?: '24h' | '12h';
   bookings: Booking[];
@@ -34,6 +36,7 @@ interface BookingSchedulerProps {
 
 export function BookingScheduler({
   orgId,
+  branchId: _branchId,
   currency,
   timeFormat = '24h',
   bookings,
@@ -47,12 +50,6 @@ export function BookingScheduler({
   const bookingsRef = useRef(bookings);
   bookingsRef.current = bookings;
 
-  const { data: workingHoursSchedule } = useQuery({
-    queryKey: ['working-hours', orgId],
-    queryFn: () => getWorkingHours(orgId),
-    enabled: !!orgId,
-  });
-
   const schedulerPreferences = useMemo(
     () => ({
       ampm: timeFormat === '12h',
@@ -61,13 +58,13 @@ export function BookingScheduler({
     [timeFormat],
   );
 
-  const viewConfig = useMemo(() => {
-    const range = getSchedulerHourRange(workingHoursSchedule, bookings);
-    return {
-      week: range,
-      day: range,
-    };
-  }, [workingHoursSchedule, bookings]);
+  const viewConfig = useMemo(
+    () => ({
+      week: FULL_SCHEDULER_HOUR_RANGE,
+      day: FULL_SCHEDULER_HOUR_RANGE,
+    }),
+    [],
+  );
 
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
@@ -95,6 +92,11 @@ export function BookingScheduler({
     [resourceIds],
   );
 
+  const selectedEmployeeCount = useMemo(
+    () => Object.values(resolvedVisibleResources).filter(Boolean).length,
+    [resolvedVisibleResources],
+  );
+
   const handleSelectAllEmployees = useCallback(() => {
     setVisibleResources(buildVisibleResourcesState(resourceIds, visibleResources, true));
   }, [resourceIds, visibleResources]);
@@ -107,6 +109,10 @@ export function BookingScheduler({
     schedulerRef,
     handleSelectAllEmployees,
     handleDeselectAllEmployees,
+    {
+      selectedCount: selectedEmployeeCount,
+      totalCount: resourceIds.length,
+    },
   );
 
   const events = useMemo(
@@ -125,6 +131,8 @@ export function BookingScheduler({
   }, []);
 
   const isSchedulerReady = !isLoading && employees.length > 0;
+
+  const scrollToNow = useSchedulerScrollToNow(schedulerRef, isSchedulerReady);
 
   useSchedulerEventClick(schedulerRef, handleBookingClick, isSchedulerReady);
 
@@ -233,11 +241,14 @@ export function BookingScheduler({
             visibleResources={resolvedVisibleResources}
             onVisibleResourcesChange={handleVisibleResourcesChange}
             onEventsChange={handleEventsChange}
+            onViewChange={scrollToNow}
+            onVisibleDateChange={scrollToNow}
             localeText={bookingSchedulerLocaleText}
             defaultPreferences={schedulerPreferences}
             views={['week', 'day', 'month', 'agenda']}
             defaultView="week"
             viewConfig={viewConfig}
+            showCurrentTimeIndicator
             eventCreation={false}
             areEventsDraggable
             areEventsResizable={false}

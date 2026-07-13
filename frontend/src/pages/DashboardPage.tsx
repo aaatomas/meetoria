@@ -1,44 +1,121 @@
-import { Grid, Typography, Card, CardContent, Box, Skeleton, Alert } from '@mui/material';
+import { Grid, Typography, Card, CardContent, Box, Skeleton, Alert, Stack } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
-import { api, DashboardStats, getApiErrorMessage } from '../api/client';
+import { useState } from 'react';
+import {
+  api,
+  DashboardStats,
+  getActiveBranchId,
+  getApiErrorMessage,
+  listBranches,
+  type DashboardScope,
+  type MetricTrend,
+  type Organization,
+} from '../api/client';
 import { formatPrice } from '../utils/formatCurrency';
 import dayjs from 'dayjs';
 import { BusiestHoursHeatmap } from '../components/dashboard/BusiestHoursHeatmap';
 import { PopularServicesList } from '../components/dashboard/PopularServicesList';
+import { StatTrend } from '../components/dashboard/StatTrend';
+import { DashboardScopeBadge } from '../components/dashboard/DashboardScopeBadge';
 
-function StatCard({ title, value, subtitle }: { title: string; value: string | number; subtitle?: string }) {
+const DASHBOARD_SCOPE_KEY = 'dashboard_scope';
+
+function readDashboardScope(): DashboardScope {
+  const saved = localStorage.getItem(DASHBOARD_SCOPE_KEY);
+  return saved === 'organization' ? 'organization' : 'branch';
+}
+
+function StatCard({
+  title,
+  value,
+  trend,
+}: {
+  title: string;
+  value: string | number;
+  trend?: MetricTrend;
+}) {
   return (
     <Card>
       <CardContent>
-        <Typography variant="body2" color="text.secondary" gutterBottom>{title}</Typography>
+        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1} mb={1}>
+          <Typography variant="body2" color="text.secondary">{title}</Typography>
+          <StatTrend trend={trend} />
+        </Stack>
         <Typography variant="h4" fontWeight={700}>{value}</Typography>
-        {subtitle && <Typography variant="caption" color="text.secondary">{subtitle}</Typography>}
       </CardContent>
     </Card>
   );
 }
 
+function buildScopeBadgeLabel(scope: DashboardScope, branchName?: string) {
+  if (scope === 'branch') {
+    return branchName ?? 'Branch';
+  }
+  return 'Organization';
+}
+
 export function DashboardPage() {
   const orgId = localStorage.getItem('organization_id');
+  const branchId = getActiveBranchId();
+  const [scope, setScope] = useState<DashboardScope>(readDashboardScope);
   const from = dayjs().startOf('month').format('YYYY-MM-DD');
   const to = dayjs().endOf('month').format('YYYY-MM-DD');
 
+  const { data: org } = useQuery({
+    queryKey: ['organization', orgId],
+    queryFn: async () => (await api.get<Organization>(`/organizations/${orgId}`)).data,
+    enabled: !!orgId,
+  });
+
+  const { data: branches = [] } = useQuery({
+    queryKey: ['branches', orgId],
+    queryFn: () => listBranches(orgId!),
+    enabled: !!orgId,
+  });
+
+  const activeBranch = branches.find((branch) => branch.id === branchId);
+  const currency = org?.currency?.trim() || 'EUR';
+  const effectiveScope: DashboardScope = scope === 'branch' && !branchId ? 'organization' : scope;
+
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['dashboard', orgId, from, to],
+    queryKey: ['dashboard', orgId, effectiveScope, branchId, from, to],
     queryFn: async () => {
       const { data } = await api.get<DashboardStats>(`/organizations/${orgId}/analytics/dashboard`, {
-        params: { from, to },
+        params: {
+          from,
+          to,
+          scope: effectiveScope,
+          ...(effectiveScope === 'branch' && branchId ? { branch_id: branchId } : {}),
+        },
       });
       return data;
     },
     enabled: !!orgId,
   });
 
+  const toggleScope = () => {
+    const nextScope: DashboardScope = effectiveScope === 'organization' ? 'branch' : 'organization';
+    if (nextScope === 'branch' && !branchId) {
+      return;
+    }
+    setScope(nextScope);
+    localStorage.setItem(DASHBOARD_SCOPE_KEY, nextScope);
+  };
+
   if (!orgId) {
     return (
       <Box>
         <Typography variant="h5" gutterBottom>Welcome to Meetoria</Typography>
         <Typography color="text.secondary">Create an organization to get started.</Typography>
+      </Box>
+    );
+  }
+
+  if (effectiveScope === 'branch' && !branchId) {
+    return (
+      <Box>
+        <Typography variant="h5" fontWeight={700} gutterBottom>Dashboard</Typography>
+        <Alert severity="info">Select a location in the header to view branch-level stats.</Alert>
       </Box>
     );
   }
@@ -64,32 +141,47 @@ export function DashboardPage() {
     );
   }
 
+  const branchName = data?.branch_name ?? activeBranch?.name;
+  const scopeBadgeLabel = buildScopeBadgeLabel(effectiveScope, branchName);
+
   return (
     <Box>
-      <Typography variant="h5" fontWeight={700} gutterBottom>Dashboard</Typography>
+      <Stack direction="row" alignItems="center" spacing={1} mb={0.5} useFlexGap flexWrap="wrap">
+        <Typography variant="h5" fontWeight={700}>Dashboard</Typography>
+        <DashboardScopeBadge
+          scope={effectiveScope}
+          label={scopeBadgeLabel}
+          disabled={effectiveScope === 'organization' && !branchId}
+          onClick={toggleScope}
+        />
+      </Stack>
       <Typography variant="body2" color="text.secondary" mb={3}>
-        {dayjs(from).format('MMMM YYYY')} overview
+        {dayjs(from).format('MMMM YYYY')} overview{org?.name ? ` · ${org.name}` : ''}
       </Typography>
 
       <Grid container spacing={3}>
         <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <StatCard title="Total Bookings" value={data?.total_bookings ?? 0} />
+          <StatCard title="Total Bookings" value={data?.total_bookings ?? 0} trend={data?.trends?.total_bookings} />
         </Grid>
         <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <StatCard title="Completed" value={data?.completed_bookings ?? 0} />
+          <StatCard title="Completed" value={data?.completed_bookings ?? 0} trend={data?.trends?.completed_bookings} />
         </Grid>
         <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <StatCard title="Revenue" value={formatPrice(data?.revenue ?? 0, 'EUR')} />
+          <StatCard title="Revenue" value={formatPrice(data?.revenue ?? 0, currency)} trend={data?.trends?.revenue} />
         </Grid>
         <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <StatCard title="New Customers" value={data?.new_customers ?? 0} />
+          <StatCard
+            title="New Customers"
+            value={data?.new_customers ?? 0}
+            trend={data?.trends?.new_customers}
+          />
         </Grid>
 
         <Grid size={{ xs: 12, md: 6 }}>
           <Card variant="outlined" sx={{ height: '100%' }}>
             <CardContent>
               <Typography variant="h6" gutterBottom>Popular Services</Typography>
-              <PopularServicesList services={data?.popular_services ?? []} />
+              <PopularServicesList services={data?.popular_services ?? []} currency={currency} />
             </CardContent>
           </Card>
         </Grid>

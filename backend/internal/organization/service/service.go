@@ -14,8 +14,10 @@ import (
 	commonmodel "github.com/meetoria/meetoria/backend/internal/common/model"
 	"github.com/meetoria/meetoria/backend/internal/organization"
 	"github.com/meetoria/meetoria/backend/internal/organization/repository"
+	branchservice "github.com/meetoria/meetoria/backend/internal/branch/service"
 	scheduleservice "github.com/meetoria/meetoria/backend/internal/schedule/service"
 	servicerepo "github.com/meetoria/meetoria/backend/internal/service/repository"
+	"github.com/meetoria/meetoria/backend/pkg/phone"
 )
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
@@ -33,10 +35,11 @@ type organizationService struct {
 	repo            repository.Repository
 	scheduleService scheduleservice.Service
 	serviceRepo     servicerepo.Repository
+	branchService   branchservice.Service
 }
 
-func NewService(repo repository.Repository, scheduleService scheduleservice.Service, serviceRepo servicerepo.Repository) Service {
-	return &organizationService{repo: repo, scheduleService: scheduleService, serviceRepo: serviceRepo}
+func NewService(repo repository.Repository, scheduleService scheduleservice.Service, serviceRepo servicerepo.Repository, branchService branchservice.Service) Service {
+	return &organizationService{repo: repo, scheduleService: scheduleService, serviceRepo: serviceRepo, branchService: branchService}
 }
 
 func (s *organizationService) Create(ctx context.Context, req organization.CreateOrganizationRequest, ownerUserID uuid.UUID) (*organization.Organization, error) {
@@ -69,13 +72,18 @@ func (s *organizationService) Create(ctx context.Context, req organization.Creat
 		currency = organization.DefaultCurrency
 	}
 
+	phoneValue, err := phone.NormalizeOptional(req.Phone)
+	if err != nil {
+		return nil, err
+	}
+
 	org := &organization.Organization{
 		Name:     req.Name,
 		Slug:     slug,
 		Timezone: timezone,
 		Currency: organization.NormalizeCurrency(currency),
 		Email:    req.Email,
-		Phone:    req.Phone,
+		Phone:    phoneValue,
 		IsActive: true,
 	}
 	defaultSettings, _ := organization.MarshalSettings(organization.DefaultOrganizationSettings())
@@ -95,9 +103,15 @@ func (s *organizationService) Create(ctx context.Context, req organization.Creat
 		return nil, apperrors.Internal("failed to add organization owner", err)
 	}
 
-	if s.scheduleService != nil {
-		if err := s.scheduleService.SeedDefaultHours(ctx, org.ID); err != nil {
-			return nil, apperrors.Internal("failed to seed default working hours", err)
+	if s.branchService != nil {
+		defBranch, err := s.branchService.CreateDefault(ctx, org.ID, timezone)
+		if err != nil {
+			return nil, err
+		}
+		if s.scheduleService != nil {
+			if err := s.scheduleService.SeedDefaultHours(ctx, org.ID, defBranch.ID); err != nil {
+				return nil, apperrors.Internal("failed to seed default working hours", err)
+			}
 		}
 	}
 
@@ -190,7 +204,15 @@ func (s *organizationService) Update(ctx context.Context, id uuid.UUID, req orga
 		org.Email = *req.Email
 	}
 	if req.Phone != nil {
-		org.Phone = *req.Phone
+		phoneValue, err := phone.NormalizeOptionalPtr(req.Phone)
+		if err != nil {
+			return nil, err
+		}
+		if phoneValue != nil {
+			org.Phone = *phoneValue
+		} else {
+			org.Phone = ""
+		}
 	}
 	if req.Address != nil {
 		org.Address = *req.Address

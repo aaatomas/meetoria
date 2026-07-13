@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import dayjs, { type Dayjs } from 'dayjs';
@@ -26,20 +26,24 @@ import { BookingDateField } from '../components/bookings/BookingDateTimeFields';
 import {
   createPublicBooking,
   getPublicAvailability,
+  getPublicBranches,
   getPublicEmployees,
   getPublicOrganization,
   getPublicServices,
   getApiErrorMessage,
+  type PublicBranch,
   type PublicEmployee,
   type PublicService,
   type PublicTimeSlot,
 } from '../api/publicClient';
 import { formatPrice } from '../utils/formatCurrency';
-import { isValidE164, normalizePhone } from '../utils/phoneUtils';
+import { requiredPhoneField, formatPhoneDisplay } from '../utils/phoneUtils';
+import { PhoneField } from '../components/common/PhoneField';
 
 const ANY_EMPLOYEE = '__any__';
 
-const steps = ['Service', 'Staff', 'Date & Time', 'Your Details', 'Confirm'];
+const BASE_STEPS = ['Service', 'Staff', 'Date & Time', 'Your Details', 'Confirm'] as const;
+const LOCATION_STEP = 'Location';
 
 function formatTime(iso: string, timeFormat: '24h' | '12h' = '24h'): string {
   return dayjs(iso).format(timeFormat === '12h' ? 'h:mm A' : 'HH:mm');
@@ -53,9 +57,16 @@ function employeeName(emp: PublicEmployee): string {
   return `${emp.first_name} ${emp.last_name}`.trim();
 }
 
+function branchLabel(branch: PublicBranch): string {
+  const parts = [branch.name];
+  if (branch.city) parts.push(branch.city);
+  return parts.join(' · ');
+}
+
 export function PublicBookingPage() {
   const { slug = '' } = useParams<{ slug: string }>();
   const [activeStep, setActiveStep] = useState(0);
+  const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [selectedService, setSelectedService] = useState<PublicService | null>(null);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>(ANY_EMPLOYEE);
   const [selectedDate, setSelectedDate] = useState<Dayjs | null>(null);
@@ -69,30 +80,47 @@ export function PublicBookingPage() {
     enabled: !!slug,
   });
 
+  const branchesQuery = useQuery({
+    queryKey: ['public-branches', slug],
+    queryFn: () => getPublicBranches(slug),
+    enabled: !!slug && !!orgQuery.data,
+  });
+
+  const branches = branchesQuery.data ?? [];
+  const hasMultipleBranches = branches.length > 1;
+  const steps = hasMultipleBranches ? [LOCATION_STEP, ...BASE_STEPS] : [...BASE_STEPS];
+
+  useEffect(() => {
+    if (branches.length === 1) {
+      setSelectedBranchId(branches[0].id);
+    }
+  }, [branches]);
+
   const currency = orgQuery.data?.currency?.trim() || 'EUR';
   const timeFormat = orgQuery.data?.time_format === '12h' ? '12h' : '24h';
 
   const servicesQuery = useQuery({
-    queryKey: ['public-services', slug],
-    queryFn: () => getPublicServices(slug),
-    enabled: !!slug && !!orgQuery.data,
+    queryKey: ['public-services', slug, selectedBranchId],
+    queryFn: () => getPublicServices(slug, selectedBranchId!),
+    enabled: !!slug && !!selectedBranchId,
   });
 
   const employeesQuery = useQuery({
-    queryKey: ['public-employees', slug, selectedService?.id],
-    queryFn: () => getPublicEmployees(slug, selectedService!.id),
-    enabled: !!slug && !!selectedService,
+    queryKey: ['public-employees', slug, selectedBranchId, selectedService?.id],
+    queryFn: () => getPublicEmployees(slug, selectedBranchId!, selectedService!.id),
+    enabled: !!slug && !!selectedBranchId && !!selectedService,
   });
 
   const availabilityQuery = useQuery({
-    queryKey: ['public-availability', slug, selectedService?.id, selectedEmployeeId, selectedDateKey],
+    queryKey: ['public-availability', slug, selectedBranchId, selectedService?.id, selectedEmployeeId, selectedDateKey],
     queryFn: () =>
       getPublicAvailability(slug, {
+        branch_id: selectedBranchId!,
         service_id: selectedService!.id,
         date: selectedDateKey,
         employee_id: selectedEmployeeId === ANY_EMPLOYEE ? undefined : selectedEmployeeId,
       }),
-    enabled: !!slug && !!selectedService && !!selectedDateKey && activeStep >= 2,
+    enabled: !!slug && !!selectedBranchId && !!selectedService && !!selectedDateKey && activeStep >= (hasMultipleBranches ? 3 : 2),
   });
 
   const customerSchema = useMemo(
@@ -100,11 +128,7 @@ export function PublicBookingPage() {
       z.object({
         first_name: z.string().min(1, 'First name is required'),
         last_name: z.string().min(1, 'Last name is required'),
-        phone: z
-          .string()
-          .min(1, 'Phone is required')
-          .transform(normalizePhone)
-          .refine(isValidE164, 'Use international format, e.g. +37060000000 or 860000000'),
+        phone: requiredPhoneField,
         email: orgQuery.data?.email_required
           ? z.string().email('Valid email is required')
           : z.string().email('Invalid email').optional().or(z.literal('')),
@@ -128,6 +152,7 @@ export function PublicBookingPage() {
           : selectedEmployeeId;
 
       return createPublicBooking(slug, {
+        branch_id: selectedBranchId!,
         service_id: selectedService!.id,
         employee_id: employeeId,
         start_time: selectedSlot!.start_time,
@@ -145,8 +170,11 @@ export function PublicBookingPage() {
   const availableSlots = (availabilityQuery.data ?? []).filter((s) => s.available);
 
   const selectedEmployee = employeesQuery.data?.find((e) => e.id === selectedEmployeeId);
+  const selectedBranch = branches.find((b) => b.id === selectedBranchId);
 
-  if (orgQuery.isLoading) {
+  const currentStep = steps[activeStep];
+
+  if (orgQuery.isLoading || branchesQuery.isLoading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
         <CircularProgress />
@@ -159,6 +187,16 @@ export function PublicBookingPage() {
       <Container maxWidth="sm" sx={{ py: 8 }}>
         <Alert severity="error">
           {getApiErrorMessage(orgQuery.error) || 'This booking page is not available.'}
+        </Alert>
+      </Container>
+    );
+  }
+
+  if (branchesQuery.isError || branches.length === 0) {
+    return (
+      <Container maxWidth="sm" sx={{ py: 8 }}>
+        <Alert severity="error">
+          {getApiErrorMessage(branchesQuery.error) || 'No locations are available for booking.'}
         </Alert>
       </Container>
     );
@@ -209,7 +247,44 @@ export function PublicBookingPage() {
 
         <Card>
           <CardContent sx={{ p: { xs: 2, sm: 4 } }}>
-            {activeStep === 0 && (
+            {currentStep === LOCATION_STEP && (
+              <Stack spacing={2}>
+                <Typography variant="h6">Select a location</Typography>
+                {branches.map((branch) => (
+                  <Card
+                    key={branch.id}
+                    variant="outlined"
+                    sx={{ borderColor: selectedBranchId === branch.id ? 'primary.main' : undefined }}
+                  >
+                    <CardActionArea
+                      onClick={() => {
+                        setSelectedBranchId(branch.id);
+                        setSelectedService(null);
+                        setSelectedEmployeeId(ANY_EMPLOYEE);
+                        setSelectedDate(null);
+                        setSelectedSlot(null);
+                      }}
+                    >
+                      <CardContent>
+                        <Typography fontWeight={600}>{branchLabel(branch)}</Typography>
+                        {branch.address && (
+                          <Typography variant="body2" color="text.secondary">
+                            {branch.address}
+                          </Typography>
+                        )}
+                        {branch.phone && (
+                          <Typography variant="body2" color="text.secondary" mt={0.5}>
+                            {formatPhoneDisplay(branch.phone)}
+                          </Typography>
+                        )}
+                      </CardContent>
+                    </CardActionArea>
+                  </Card>
+                ))}
+              </Stack>
+            )}
+
+            {currentStep === 'Service' && (
               <Stack spacing={2}>
                 <Typography variant="h6">Select a service</Typography>
                 {servicesQuery.isLoading && <CircularProgress size={24} />}
@@ -253,7 +328,7 @@ export function PublicBookingPage() {
               </Stack>
             )}
 
-            {activeStep === 1 && (
+            {currentStep === 'Staff' && (
               <Stack spacing={2}>
                 <Typography variant="h6">Select staff member</Typography>
                 <Card
@@ -290,7 +365,7 @@ export function PublicBookingPage() {
               </Stack>
             )}
 
-            {activeStep === 2 && (
+            {currentStep === 'Date & Time' && (
               <Stack spacing={3}>
                 <Typography variant="h6">Select date and time</Typography>
                 <BookingDateField
@@ -331,7 +406,7 @@ export function PublicBookingPage() {
               </Stack>
             )}
 
-            {activeStep === 3 && (
+            {currentStep === 'Your Details' && (
               <Stack spacing={2} component="form" id="customer-form">
                 <Typography variant="h6">Your information</Typography>
                 <Controller
@@ -352,7 +427,14 @@ export function PublicBookingPage() {
                   name="phone"
                   control={control}
                   render={({ field, fieldState }) => (
-                    <TextField {...field} label="Phone" required fullWidth placeholder="+37060000000" error={!!fieldState.error} helperText={fieldState.error?.message || 'International format: +37060000000 or local 860000000'} />
+                    <PhoneField
+                      {...field}
+                      label="Phone"
+                      required
+                      fullWidth
+                      error={!!fieldState.error}
+                      helperText={fieldState.error?.message}
+                    />
                   )}
                 />
                 <Controller
@@ -365,11 +447,12 @@ export function PublicBookingPage() {
               </Stack>
             )}
 
-            {activeStep === 4 && selectedService && selectedSlot && (
+            {currentStep === 'Confirm' && selectedService && selectedSlot && (
               <Stack spacing={2}>
                 <Typography variant="h6">Confirm your booking</Typography>
                 <Divider />
                 <Stack spacing={1}>
+                  {selectedBranch && <Row label="Location" value={branchLabel(selectedBranch)} />}
                   <Row label="Service" value={selectedService.name} />
                   <Row
                     label="Staff"
@@ -420,12 +503,13 @@ export function PublicBookingPage() {
                 <Button
                   variant="contained"
                   disabled={
-                    (activeStep === 0 && !selectedService) ||
-                    (activeStep === 1 && !selectedEmployeeId) ||
-                    (activeStep === 2 && !selectedSlot)
+                    (currentStep === LOCATION_STEP && !selectedBranchId) ||
+                    (currentStep === 'Service' && !selectedService) ||
+                    (currentStep === 'Staff' && !selectedEmployeeId) ||
+                    (currentStep === 'Date & Time' && !selectedSlot)
                   }
                   onClick={() => {
-                    if (activeStep === 3) {
+                    if (currentStep === 'Your Details') {
                       handleSubmit(() => setActiveStep((s) => s + 1))();
                     } else {
                       setActiveStep((s) => s + 1);

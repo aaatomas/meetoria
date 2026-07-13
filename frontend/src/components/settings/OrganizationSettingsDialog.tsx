@@ -186,9 +186,10 @@ export function OrganizationSettingsDialog({ org, open, onClose }: OrganizationS
   });
 
   useQuery({
-    queryKey: ['working-hours', org?.id],
+    queryKey: ['working-hours', org?.id, localStorage.getItem('branch_id')],
     queryFn: async () => {
-      const data = await getWorkingHours(org!.id);
+      const branchId = localStorage.getItem('branch_id') ?? undefined;
+      const data = await getWorkingHours(org!.id, branchId);
       setSchedule(data);
       return data;
     },
@@ -280,7 +281,10 @@ export function OrganizationSettingsDialog({ org, open, onClose }: OrganizationS
   });
 
   const saveWorkingHoursMutation = useMutation({
-    mutationFn: () => saveWorkingHours(org!.id, schedule),
+    mutationFn: () => {
+      const branchId = localStorage.getItem('branch_id') ?? undefined;
+      return saveWorkingHours(org!.id, schedule, branchId);
+    },
     onSuccess: (data) => {
       setSchedule(data);
       queryClient.invalidateQueries({ queryKey: ['working-hours', org?.id] });

@@ -1,13 +1,49 @@
 package phone
 
 import (
+	"reflect"
 	"regexp"
 	"strings"
+
+	"github.com/gin-gonic/gin/binding"
+	"github.com/go-playground/validator/v10"
 
 	apperrors "github.com/meetoria/meetoria/backend/internal/common/errors"
 )
 
+const DisplayExample = "+370 123 12345"
+
 var e164Pattern = regexp.MustCompile(`^\+[1-9]\d{6,14}$`)
+
+func RegisterValidators() {
+	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
+		_ = v.RegisterValidation("e164", validatePhone)
+	}
+}
+
+func validatePhone(fl validator.FieldLevel) bool {
+	raw, ok := fieldString(fl.Field())
+	if !ok || raw == "" {
+		return true
+	}
+	_, err := NormalizeE164(raw)
+	return err == nil
+}
+
+func fieldString(field reflect.Value) (string, bool) {
+	switch field.Kind() {
+	case reflect.String:
+		return field.String(), true
+	case reflect.Ptr:
+		if field.IsNil() {
+			return "", true
+		}
+		if field.Elem().Kind() == reflect.String {
+			return field.Elem().String(), true
+		}
+	}
+	return "", false
+}
 
 func NormalizeE164(raw string) (string, error) {
 	var b strings.Builder
@@ -34,8 +70,26 @@ func NormalizeE164(raw string) (string, error) {
 	}
 
 	if !e164Pattern.MatchString(phone) {
-		return "", apperrors.Validation("phone must be in international format, e.g. +37060000000")
+		return "", apperrors.Validation("phone must use international format, e.g. " + DisplayExample)
 	}
 
 	return phone, nil
+}
+
+func NormalizeOptional(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
+	}
+	return NormalizeE164(raw)
+}
+
+func NormalizeOptionalPtr(value *string) (*string, error) {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		return value, nil
+	}
+	normalized, err := NormalizeE164(*value)
+	if err != nil {
+		return nil, err
+	}
+	return &normalized, nil
 }

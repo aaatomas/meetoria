@@ -12,14 +12,14 @@ import (
 
 type Repository interface {
 	GetOrganizationStats(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]analytics.OrganizationStats, error)
-	GetLiveDashboardSummary(ctx context.Context, orgID uuid.UUID, from, to time.Time) (*analytics.LiveDashboardSummary, error)
+	GetLiveDashboardSummary(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, from, to time.Time) (*analytics.LiveDashboardSummary, error)
 	GetEmployeeStats(ctx context.Context, orgID, employeeID uuid.UUID, from, to time.Time) ([]analytics.EmployeeStats, error)
 	GetCustomerStats(ctx context.Context, orgID, customerID uuid.UUID) (*analytics.CustomerStats, error)
 	UpsertOrganizationStats(ctx context.Context, stats *analytics.OrganizationStats) error
-	GetPopularServices(ctx context.Context, orgID uuid.UUID, from, to time.Time, limit int) ([]analytics.PopularService, error)
-	GetHourlyHeatmap(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([][]analytics.HeatmapCell, error)
-	GetBusiestDays(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]analytics.DayCount, error)
-	GetBusiestHours(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]analytics.HourCount, error)
+	GetPopularServices(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, from, to time.Time, limit int) ([]analytics.PopularService, error)
+	GetHourlyHeatmap(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, from, to time.Time) ([][]analytics.HeatmapCell, error)
+	GetBusiestDays(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, from, to time.Time) ([]analytics.DayCount, error)
+	GetBusiestHours(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, from, to time.Time) ([]analytics.HourCount, error)
 }
 
 type gormRepository struct {
@@ -39,10 +39,10 @@ func (r *gormRepository) GetOrganizationStats(ctx context.Context, orgID uuid.UU
 	return stats, err
 }
 
-func (r *gormRepository) GetLiveDashboardSummary(ctx context.Context, orgID uuid.UUID, from, to time.Time) (*analytics.LiveDashboardSummary, error) {
+func (r *gormRepository) GetLiveDashboardSummary(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, from, to time.Time) (*analytics.LiveDashboardSummary, error) {
 	var summary analytics.LiveDashboardSummary
 
-	err := r.db.WithContext(ctx).Raw(`
+	bookingQuery := `
 		SELECT
 			COUNT(*) FILTER (WHERE status NOT IN ('cancelled')) AS total_bookings,
 			COUNT(*) FILTER (WHERE status = 'completed') AS completed_bookings,
@@ -51,18 +51,36 @@ func (r *gormRepository) GetLiveDashboardSummary(ctx context.Context, orgID uuid
 			COALESCE(SUM(price) FILTER (WHERE status = 'completed'), 0) AS revenue
 		FROM bookings
 		WHERE organization_id = ? AND start_time >= ? AND start_time <= ?
-		  AND deleted_at IS NULL
-	`, orgID, from, to).Scan(&summary).Error
+		  AND deleted_at IS NULL`
+	bookingArgs := []any{orgID, from, to}
+	if branchID != nil {
+		bookingQuery += ` AND branch_id = ?`
+		bookingArgs = append(bookingArgs, *branchID)
+	}
+
+	err := r.db.WithContext(ctx).Raw(bookingQuery, bookingArgs...).Scan(&summary).Error
 	if err != nil {
 		return nil, err
 	}
 
-	err = r.db.WithContext(ctx).Raw(`
-		SELECT COUNT(*) AS new_customers
-		FROM customers
-		WHERE organization_id = ? AND created_at >= ? AND created_at <= ?
-		  AND deleted_at IS NULL
-	`, orgID, from, to).Scan(&summary.NewCustomers).Error
+	if branchID == nil {
+		err = r.db.WithContext(ctx).Raw(`
+			SELECT COUNT(*) AS new_customers
+			FROM customers
+			WHERE organization_id = ? AND created_at >= ? AND created_at <= ?
+			  AND deleted_at IS NULL
+		`, orgID, from, to).Scan(&summary.NewCustomers).Error
+	} else {
+		err = r.db.WithContext(ctx).Raw(`
+			SELECT COUNT(DISTINCT c.id) AS new_customers
+			FROM customers c
+			INNER JOIN bookings b ON b.customer_id = c.id AND b.organization_id = c.organization_id
+			WHERE c.organization_id = ? AND c.created_at >= ? AND c.created_at <= ?
+			  AND c.deleted_at IS NULL AND b.deleted_at IS NULL
+			  AND b.branch_id = ?
+			  AND b.start_time >= ? AND b.start_time <= ?
+		`, orgID, from, to, *branchID, from, to).Scan(&summary.NewCustomers).Error
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -97,22 +115,30 @@ func (r *gormRepository) UpsertOrganizationStats(ctx context.Context, stats *ana
 		FirstOrCreate(stats).Error
 }
 
-func (r *gormRepository) GetPopularServices(ctx context.Context, orgID uuid.UUID, from, to time.Time, limit int) ([]analytics.PopularService, error) {
+func (r *gormRepository) GetPopularServices(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, from, to time.Time, limit int) ([]analytics.PopularService, error) {
 	var results []analytics.PopularService
-	err := r.db.WithContext(ctx).Raw(`
+	query := `
 		SELECT b.service_id, s.name as service_name, s.color as color, COUNT(*) as count, SUM(b.price) as revenue
 		FROM bookings b
 		JOIN services s ON s.id = b.service_id
 		WHERE b.organization_id = ? AND b.start_time >= ? AND b.start_time <= ?
-		  AND b.status NOT IN ('cancelled') AND b.deleted_at IS NULL
+		  AND b.status NOT IN ('cancelled') AND b.deleted_at IS NULL`
+	args := []any{orgID, from, to}
+	if branchID != nil {
+		query += ` AND b.branch_id = ?`
+		args = append(args, *branchID)
+	}
+	query += `
 		GROUP BY b.service_id, s.name, s.color
 		ORDER BY count DESC
-		LIMIT ?
-	`, orgID, from, to, limit).Scan(&results).Error
+		LIMIT ?`
+	args = append(args, limit)
+
+	err := r.db.WithContext(ctx).Raw(query, args...).Scan(&results).Error
 	return results, err
 }
 
-func (r *gormRepository) GetHourlyHeatmap(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([][]analytics.HeatmapCell, error) {
+func (r *gormRepository) GetHourlyHeatmap(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, from, to time.Time) ([][]analytics.HeatmapCell, error) {
 	type heatmapRow struct {
 		Weekday int
 		Slot    int
@@ -120,16 +146,23 @@ func (r *gormRepository) GetHourlyHeatmap(ctx context.Context, orgID uuid.UUID, 
 	}
 
 	var rows []heatmapRow
-	err := r.db.WithContext(ctx).Raw(`
+	query := `
 		SELECT
 			((EXTRACT(DOW FROM start_time)::int + 6) % 7) AS weekday,
 			(EXTRACT(HOUR FROM start_time)::int / 2) AS slot,
 			COUNT(*)::int AS count
 		FROM bookings
 		WHERE organization_id = ? AND start_time >= ? AND start_time <= ?
-		  AND status NOT IN ('cancelled') AND deleted_at IS NULL
-		GROUP BY weekday, slot
-	`, orgID, from, to).Scan(&rows).Error
+		  AND status NOT IN ('cancelled') AND deleted_at IS NULL`
+	args := []any{orgID, from, to}
+	if branchID != nil {
+		query += ` AND branch_id = ?`
+		args = append(args, *branchID)
+	}
+	query += `
+		GROUP BY weekday, slot`
+
+	err := r.db.WithContext(ctx).Raw(query, args...).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -151,28 +184,42 @@ func (r *gormRepository) GetHourlyHeatmap(ctx context.Context, orgID uuid.UUID, 
 	return heatmap, nil
 }
 
-func (r *gormRepository) GetBusiestDays(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]analytics.DayCount, error) {
+func (r *gormRepository) GetBusiestDays(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, from, to time.Time) ([]analytics.DayCount, error) {
 	var results []analytics.DayCount
-	err := r.db.WithContext(ctx).Raw(`
+	query := `
 		SELECT TO_CHAR(start_time, 'Day') as day, COUNT(*) as count
 		FROM bookings
 		WHERE organization_id = ? AND start_time >= ? AND start_time <= ?
-		  AND status NOT IN ('cancelled') AND deleted_at IS NULL
+		  AND status NOT IN ('cancelled') AND deleted_at IS NULL`
+	args := []any{orgID, from, to}
+	if branchID != nil {
+		query += ` AND branch_id = ?`
+		args = append(args, *branchID)
+	}
+	query += `
 		GROUP BY TO_CHAR(start_time, 'Day'), EXTRACT(DOW FROM start_time)
-		ORDER BY count DESC
-	`, orgID, from, to).Scan(&results).Error
+		ORDER BY count DESC`
+
+	err := r.db.WithContext(ctx).Raw(query, args...).Scan(&results).Error
 	return results, err
 }
 
-func (r *gormRepository) GetBusiestHours(ctx context.Context, orgID uuid.UUID, from, to time.Time) ([]analytics.HourCount, error) {
+func (r *gormRepository) GetBusiestHours(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, from, to time.Time) ([]analytics.HourCount, error) {
 	var results []analytics.HourCount
-	err := r.db.WithContext(ctx).Raw(`
+	query := `
 		SELECT EXTRACT(HOUR FROM start_time)::int as hour, COUNT(*) as count
 		FROM bookings
 		WHERE organization_id = ? AND start_time >= ? AND start_time <= ?
-		  AND status NOT IN ('cancelled') AND deleted_at IS NULL
+		  AND status NOT IN ('cancelled') AND deleted_at IS NULL`
+	args := []any{orgID, from, to}
+	if branchID != nil {
+		query += ` AND branch_id = ?`
+		args = append(args, *branchID)
+	}
+	query += `
 		GROUP BY EXTRACT(HOUR FROM start_time)
-		ORDER BY hour ASC
-	`, orgID, from, to).Scan(&results).Error
+		ORDER BY hour ASC`
+
+	err := r.db.WithContext(ctx).Raw(query, args...).Scan(&results).Error
 	return results, err
 }

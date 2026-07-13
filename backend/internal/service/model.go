@@ -1,6 +1,8 @@
 package service
 
 import (
+	"github.com/google/uuid"
+
 	commonmodel "github.com/meetoria/meetoria/backend/internal/common/model"
 )
 
@@ -17,7 +19,8 @@ type Service struct {
 }
 
 type CreateServiceRequest struct {
-	Name            string  `json:"name" binding:"required,min=1,max=255"`
+	BranchID        *uuid.UUID `json:"branch_id"`
+	Name            string     `json:"name" binding:"required,min=1,max=255"`
 	Description     string  `json:"description"`
 	DurationMinutes int     `json:"duration_minutes" binding:"required,min=5,max=480"`
 	Price           float64 `json:"price" binding:"min=0"`

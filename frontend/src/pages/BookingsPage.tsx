@@ -18,7 +18,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useState, useMemo } from 'react';
 import dayjs, { Dayjs } from 'dayjs';
-import { api, Booking, Customer, Employee, Service, PaginatedResponse, getApiErrorMessage, parseOrganizationSettings, type Organization } from '../api/client';
+import { api, Booking, Customer, PaginatedResponse, getActiveBranchId, getApiErrorMessage, listEmployees, listServices, parseOrganizationSettings, resolveActiveBranchId, type Organization } from '../api/client';
 import { BookingScheduler } from '../components/bookings/BookingScheduler';
 import { BookingDateTimeFields } from '../components/bookings/BookingDateTimeFields';
 import { renderEmployeeLabel } from '../components/bookings/renderEmployeeLabel';
@@ -44,6 +44,7 @@ const emptyOption = (label: string) => (
 
 export function BookingsPage() {
   const orgId = localStorage.getItem('organization_id')!;
+  const branchId = getActiveBranchId();
   const [open, setOpen] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const queryClient = useQueryClient();
@@ -58,14 +59,14 @@ export function BookingsPage() {
   const timeFormat = parseOrganizationSettings(org?.settings).time_format;
 
   const { data: bookings = [], isLoading: bookingsLoading } = useQuery({
-    queryKey: ['bookings', orgId],
+    queryKey: ['bookings', orgId, branchId],
     queryFn: async () => {
       const { data } = await api.get<PaginatedResponse<Booking>>(`/organizations/${orgId}/bookings`, {
-        params: { limit: 100 },
+        params: { limit: 100, ...(branchId ? { branch_id: branchId } : {}) },
       });
       return data.data;
     },
-    enabled: !!orgId,
+    enabled: !!orgId && !!branchId,
   });
 
   const { data: customers = [] } = useQuery({
@@ -75,15 +76,15 @@ export function BookingsPage() {
   });
 
   const { data: employees = [] } = useQuery({
-    queryKey: ['employees', orgId],
-    queryFn: async () => (await api.get<PaginatedResponse<Employee>>(`/organizations/${orgId}/employees`)).data.data,
-    enabled: !!orgId,
+    queryKey: ['employees', orgId, branchId],
+    queryFn: () => listEmployees(orgId, branchId),
+    enabled: !!orgId && !!branchId,
   });
 
   const { data: services = [] } = useQuery({
-    queryKey: ['services', orgId],
-    queryFn: async () => (await api.get<PaginatedResponse<Service>>(`/organizations/${orgId}/services`)).data.data,
-    enabled: !!orgId,
+    queryKey: ['services', orgId, branchId],
+    queryFn: () => listServices(orgId, branchId),
+    enabled: !!orgId && !!branchId,
   });
 
   const activeEmployees = useMemo(
@@ -108,14 +109,20 @@ export function BookingsPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: BookingForm) =>
-      api.post(`/organizations/${orgId}/bookings`, {
+    mutationFn: async (data: BookingForm) => {
+      const activeBranchId = branchId ?? (await resolveActiveBranchId(orgId));
+      if (!activeBranchId) {
+        throw new Error('No location selected. Choose a location in the header.');
+      }
+      return api.post(`/organizations/${orgId}/bookings`, {
         customer_id: data.customer_id,
         employee_id: data.employee_id,
         service_id: data.service_id,
+        branch_id: activeBranchId,
         start_time: data.start_at!.toISOString(),
         notes: data.notes ?? '',
-      }),
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
       setOpen(false);
@@ -152,6 +159,15 @@ export function BookingsPage() {
     );
   }
 
+  if (!branchId) {
+    return (
+      <Box>
+        <Typography variant="h5" fontWeight={700} gutterBottom>Bookings</Typography>
+        <Alert severity="info">Select a location in the header to view branch bookings.</Alert>
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={1.5} flexShrink={0}>
@@ -175,6 +191,7 @@ export function BookingsPage() {
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <BookingScheduler
           orgId={orgId}
+          branchId={branchId}
           currency={currency}
           timeFormat={timeFormat}
           bookings={bookings}

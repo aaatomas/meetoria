@@ -32,20 +32,24 @@ import {
   checkEmployeeDeletion,
   deleteEmployee,
   Employee,
+  getActiveBranchId,
   getApiErrorMessage,
-  PaginatedResponse,
+  listEmployees,
+  resolveActiveBranchId,
   updateEmployee,
   uploadEmployeeAvatar,
 } from '../api/client';
 import { ConfirmDeleteDialog } from '../components/common/ConfirmDeleteDialog';
+import { PhoneField } from '../components/common/PhoneField';
 import { EditDialogTitle } from '../components/EditDialogTitle';
 import { EmployeeAvatar } from '../components/employees/EmployeeAvatar';
+import { formatPhoneDisplay, optionalPhoneField } from '../utils/phoneUtils';
 
 const schema = z.object({
   first_name: z.string().min(1, 'First name is required'),
   last_name: z.string().min(1, 'Last name is required'),
   email: z.string().email().optional().or(z.literal('')),
-  phone: z.string().optional(),
+  phone: optionalPhoneField,
   title: z.string().optional(),
   is_active: z.boolean(),
 });
@@ -102,6 +106,7 @@ function AvatarPicker({
 
 export function EmployeesPage() {
   const orgId = localStorage.getItem('organization_id')!;
+  const branchId = getActiveBranchId();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Employee | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
@@ -113,9 +118,9 @@ export function EmployeesPage() {
   const queryClient = useQueryClient();
 
   const { data: employees, isLoading } = useQuery({
-    queryKey: ['employees', orgId],
-    queryFn: async () => (await api.get<PaginatedResponse<Employee>>(`/organizations/${orgId}/employees`)).data.data,
-    enabled: !!orgId,
+    queryKey: ['employees', orgId, branchId],
+    queryFn: () => listEmployees(orgId, branchId),
+    enabled: !!orgId && !!branchId,
   });
 
   const { data: deletionCheck, isLoading: deletionCheckLoading } = useQuery({
@@ -157,7 +162,7 @@ export function EmployeesPage() {
       first_name: employee.first_name,
       last_name: employee.last_name,
       email: employee.email ?? '',
-      phone: employee.phone ?? '',
+      phone: employee.phone ? formatPhoneDisplay(employee.phone) : '',
       title: employee.title ?? '',
       is_active: employee.is_active,
     });
@@ -195,7 +200,14 @@ export function EmployeesPage() {
       }
 
       const { is_active: _isActive, ...createData } = payload;
-      const { data: employee } = await api.post<Employee>(`/organizations/${orgId}/employees`, createData);
+      const branchId = await resolveActiveBranchId(orgId);
+      if (!branchId) {
+        throw new Error('No location selected. Choose a location in the header or add one in Settings.');
+      }
+      const { data: employee } = await api.post<Employee>(`/organizations/${orgId}/employees`, {
+        ...createData,
+        branch_id: branchId,
+      });
       return employee;
     },
     onSuccess: () => {
@@ -239,6 +251,15 @@ export function EmployeesPage() {
     : deletionCheck?.can_delete
       ? `Delete ${editing?.first_name} ${editing?.last_name}? This cannot be undone.`
       : deletionCheck?.message ?? 'Cannot delete this employee.';
+
+  if (!branchId) {
+    return (
+      <Box>
+        <Typography variant="h5" fontWeight={700} gutterBottom>Employees</Typography>
+        <Alert severity="info">Select a location in the header to manage branch employees.</Alert>
+      </Box>
+    );
+  }
 
   return (
     <Box>
@@ -340,8 +361,14 @@ export function EmployeesPage() {
               <Controller name="email" control={control} render={({ field }) => (
                 <TextField {...field} label="Email" fullWidth />
               )} />
-              <Controller name="phone" control={control} render={({ field }) => (
-                <TextField {...field} label="Phone" fullWidth />
+              <Controller name="phone" control={control} render={({ field, fieldState }) => (
+                <PhoneField
+                  {...field}
+                  label="Phone"
+                  fullWidth
+                  error={!!fieldState.error}
+                  helperText={fieldState.error?.message}
+                />
               )} />
             </Stack>
           </DialogContent>

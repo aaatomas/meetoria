@@ -13,8 +13,6 @@ import {
   Menu,
   MenuItem,
   Divider,
-  Select,
-  FormControl,
 } from '@mui/material';
 import {
   Dashboard,
@@ -26,11 +24,21 @@ import {
   Menu as MenuIcon,
   Logout,
 } from '@mui/icons-material';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthProvider';
-import { api, Organization } from '../../api/client';
+import {
+  api,
+  Branch,
+  listBranches,
+  locationKey,
+  Organization,
+  parseLocationKey,
+  setActiveBranchId,
+  setActiveLocation,
+} from '../../api/client';
+import { LocationSelect } from './LocationSelect';
 
 const DRAWER_WIDTH = 260;
 const CONTENT_GUTTER = 1.5;
@@ -44,9 +52,20 @@ const navItems = [
   { label: 'Settings', path: '/settings', icon: <Settings /> },
 ];
 
+function defaultBranchId(branches: Branch[]): string {
+  return branches.find((b) => b.is_default)?.id ?? branches[0]?.id ?? '';
+}
+
+function readStoredLocationKey(): string {
+  const orgId = localStorage.getItem('organization_id');
+  const branchId = localStorage.getItem('branch_id');
+  return orgId && branchId ? locationKey(orgId, branchId) : '';
+}
+
 export function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [activeLocationKey, setActiveLocationKey] = useState(readStoredLocationKey);
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -59,10 +78,63 @@ export function AppLayout() {
     },
   });
 
-  const selectedOrgId = localStorage.getItem('organization_id') || orgs?.[0]?.id || '';
+  const { data: branchesByOrg } = useQuery({
+    queryKey: ['branches-by-org', orgs?.map((o) => o.id).join(',')],
+    queryFn: async () => {
+      if (!orgs?.length) return {} as Record<string, Branch[]>;
+      const pairs = await Promise.all(
+        orgs.map(async (org) => [org.id, await listBranches(org.id)] as const),
+      );
+      return Object.fromEntries(pairs);
+    },
+    enabled: !!orgs?.length,
+  });
 
-  const handleOrgChange = (orgId: string) => {
-    localStorage.setItem('organization_id', orgId);
+  const parsedLocation = parseLocationKey(activeLocationKey);
+  const selectedOrgId = parsedLocation?.orgId || localStorage.getItem('organization_id') || orgs?.[0]?.id || '';
+  const branchesForOrg = branchesByOrg?.[selectedOrgId] ?? [];
+  const selectedBranchId =
+    parsedLocation?.branchId || localStorage.getItem('branch_id') || defaultBranchId(branchesForOrg);
+
+  const selectedLocationKey =
+    selectedOrgId && selectedBranchId ? locationKey(selectedOrgId, selectedBranchId) : activeLocationKey;
+
+  const locationOptions = useMemo(() => {
+    if (!orgs?.length || !branchesByOrg) return [];
+    return orgs.flatMap((org) => {
+      const branches = branchesByOrg[org.id] ?? [];
+      return branches.map((branch) => ({
+        org,
+        branch,
+        key: locationKey(org.id, branch.id),
+      }));
+    });
+  }, [orgs, branchesByOrg]);
+
+  const selectedLocation = locationOptions.find((option) => option.key === selectedLocationKey);
+
+  useEffect(() => {
+    if (!orgs?.length || !branchesByOrg) return;
+
+    const orgId = localStorage.getItem('organization_id') || orgs[0].id;
+    const branches = branchesByOrg[orgId] ?? [];
+    const branchId = localStorage.getItem('branch_id') || defaultBranchId(branches);
+    if (!orgId || !branchId) return;
+
+    if (!localStorage.getItem('organization_id')) {
+      localStorage.setItem('organization_id', orgId);
+    }
+    if (!localStorage.getItem('branch_id')) {
+      setActiveBranchId(branchId);
+    }
+
+    setActiveLocationKey(locationKey(orgId, branchId));
+  }, [orgs, branchesByOrg]);
+
+  const handleLocationChange = (value: string) => {
+    const parsed = parseLocationKey(value);
+    if (!parsed) return;
+    setActiveLocation(parsed.orgId, parsed.branchId);
     window.location.reload();
   };
 
@@ -113,16 +185,13 @@ export function AppLayout() {
             Meetoria
           </Typography>
           <Box sx={{ flexGrow: 1 }} />
-          {orgs && orgs.length > 0 && (
-            <FormControl size="small" sx={{ minWidth: 200, mr: 2 }}>
-              <Select native value={selectedOrgId} onChange={(e) => handleOrgChange(e.target.value as string)}>
-                {orgs.map((org) => (
-                  <option key={org.id} value={org.id}>
-                    {org.name}
-                  </option>
-                ))}
-              </Select>
-            </FormControl>
+          {locationOptions.length > 0 && (
+            <LocationSelect
+              options={locationOptions}
+              value={selectedLocationKey}
+              selected={selectedLocation}
+              onChange={handleLocationChange}
+            />
           )}
           <IconButton onClick={(e) => setAnchorEl(e.currentTarget)}>
             <Avatar sx={{ width: 36, height: 36, bgcolor: 'primary.main' }}>
