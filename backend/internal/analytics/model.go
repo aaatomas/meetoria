@@ -98,6 +98,8 @@ type LiveDashboardSummary struct {
 type PopularService struct {
 	ServiceID   uuid.UUID `json:"service_id"`
 	ServiceName string    `json:"service_name"`
+	BranchID    uuid.UUID `json:"branch_id"`
+	BranchName  string    `json:"branch_name"`
 	Color       string    `json:"color,omitempty"`
 	Count       int       `json:"count"`
 	Revenue     float64   `json:"revenue"`

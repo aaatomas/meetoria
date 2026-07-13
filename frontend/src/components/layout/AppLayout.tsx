@@ -35,6 +35,7 @@ import {
   locationKey,
   Organization,
   parseLocationKey,
+  pickActiveBranch,
   setActiveBranchId,
   setActiveLocation,
 } from '../../api/client';
@@ -52,8 +53,8 @@ const navItems = [
   { label: 'Settings', path: '/settings', icon: <Settings /> },
 ];
 
-function defaultBranchId(branches: Branch[]): string {
-  return branches.find((b) => b.is_default)?.id ?? branches[0]?.id ?? '';
+function resolveBranchId(branches: Branch[], preferredId?: string | null): string {
+  return pickActiveBranch(branches, preferredId)?.id ?? '';
 }
 
 function readStoredLocationKey(): string {
@@ -93,8 +94,8 @@ export function AppLayout() {
   const parsedLocation = parseLocationKey(activeLocationKey);
   const selectedOrgId = parsedLocation?.orgId || localStorage.getItem('organization_id') || orgs?.[0]?.id || '';
   const branchesForOrg = branchesByOrg?.[selectedOrgId] ?? [];
-  const selectedBranchId =
-    parsedLocation?.branchId || localStorage.getItem('branch_id') || defaultBranchId(branchesForOrg);
+  const storedBranchId = parsedLocation?.branchId || localStorage.getItem('branch_id');
+  const selectedBranchId = resolveBranchId(branchesForOrg, storedBranchId);
 
   const selectedLocationKey =
     selectedOrgId && selectedBranchId ? locationKey(selectedOrgId, selectedBranchId) : activeLocationKey;
@@ -102,7 +103,7 @@ export function AppLayout() {
   const locationOptions = useMemo(() => {
     if (!orgs?.length || !branchesByOrg) return [];
     return orgs.flatMap((org) => {
-      const branches = branchesByOrg[org.id] ?? [];
+      const branches = (branchesByOrg[org.id] ?? []).filter((branch) => branch.is_active);
       return branches.map((branch) => ({
         org,
         branch,
@@ -118,13 +119,14 @@ export function AppLayout() {
 
     const orgId = localStorage.getItem('organization_id') || orgs[0].id;
     const branches = branchesByOrg[orgId] ?? [];
-    const branchId = localStorage.getItem('branch_id') || defaultBranchId(branches);
+    const storedId = localStorage.getItem('branch_id');
+    const branchId = resolveBranchId(branches, storedId);
     if (!orgId || !branchId) return;
 
     if (!localStorage.getItem('organization_id')) {
       localStorage.setItem('organization_id', orgId);
     }
-    if (!localStorage.getItem('branch_id')) {
+    if (storedId !== branchId) {
       setActiveBranchId(branchId);
     }
 

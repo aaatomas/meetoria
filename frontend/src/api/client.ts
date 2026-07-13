@@ -81,14 +81,21 @@ export function getActiveBranchId(): string | null {
   return localStorage.getItem('branch_id');
 }
 
+export function pickActiveBranch(branches: Branch[], preferredId?: string | null): Branch | undefined {
+  const active = branches.filter((branch) => branch.is_active);
+  if (preferredId) {
+    const preferred = active.find((branch) => branch.id === preferredId);
+    if (preferred) return preferred;
+  }
+  return active.find((branch) => branch.is_default) ?? active[0];
+}
+
 export async function resolveActiveBranchId(orgId: string): Promise<string | null> {
-  const stored = getActiveBranchId();
-  if (stored) return stored;
   const branches = await listBranches(orgId);
-  const defaultBranch = branches.find((b) => b.is_default) ?? branches[0];
-  if (defaultBranch) {
-    setActiveBranchId(defaultBranch.id);
-    return defaultBranch.id;
+  const branch = pickActiveBranch(branches, getActiveBranchId());
+  if (branch) {
+    setActiveBranchId(branch.id);
+    return branch.id;
   }
   return null;
 }
@@ -434,7 +441,7 @@ export interface DashboardStats {
   revenue: number;
   new_customers: number;
   trends: DashboardTrends;
-  popular_services: Array<{ service_id: string; service_name: string; color?: string; count: number; revenue: number }>;
+  popular_services: Array<{ service_id: string; service_name: string; branch_id: string; branch_name: string; color?: string; count: number; revenue: number }>;
   busiest_days: Array<{ day: string; count: number }>;
   busiest_hours: Array<{ hour: number; count: number }>;
   hourly_heatmap?: HeatmapCell[][];
@@ -444,9 +451,16 @@ export interface HeatmapCell {
   count: number;
 }
 
+export interface DayCount {
+  day: string;
+  count: number;
+}
+
 export interface PopularService {
   service_id: string;
   service_name: string;
+  branch_id: string;
+  branch_name: string;
   color?: string;
   count: number;
   revenue: number;

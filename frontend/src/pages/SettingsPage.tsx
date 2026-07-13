@@ -362,9 +362,6 @@ export function SettingsPage() {
                         />
                       </TableCell>
                       <TableCell align="right">
-                        <IconButton size="small" aria-label={`Edit ${branch.name}`} onClick={() => openBranchDialog(branch)}>
-                          <EditOutlined fontSize="small" />
-                        </IconButton>
                         {!branch.is_default && branch.is_active && (
                           <Button
                             size="small"
@@ -374,6 +371,9 @@ export function SettingsPage() {
                             Set default
                           </Button>
                         )}
+                        <IconButton size="small" aria-label={`Edit ${branch.name}`} onClick={() => openBranchDialog(branch)}>
+                          <EditOutlined fontSize="small" />
+                        </IconButton>
                       </TableCell>
                     </TableRow>
                   ))}

@@ -118,9 +118,10 @@ func (r *gormRepository) UpsertOrganizationStats(ctx context.Context, stats *ana
 func (r *gormRepository) GetPopularServices(ctx context.Context, orgID uuid.UUID, branchID *uuid.UUID, from, to time.Time, limit int) ([]analytics.PopularService, error) {
 	var results []analytics.PopularService
 	query := `
-		SELECT b.service_id, s.name as service_name, s.color as color, COUNT(*) as count, SUM(b.price) as revenue
+		SELECT b.branch_id, br.name as branch_name, b.service_id, s.name as service_name, s.color as color, COUNT(*) as count, SUM(b.price) as revenue
 		FROM bookings b
 		JOIN services s ON s.id = b.service_id
+		JOIN branches br ON br.id = b.branch_id
 		WHERE b.organization_id = ? AND b.start_time >= ? AND b.start_time <= ?
 		  AND b.status NOT IN ('cancelled') AND b.deleted_at IS NULL`
 	args := []any{orgID, from, to}
@@ -129,7 +130,7 @@ func (r *gormRepository) GetPopularServices(ctx context.Context, orgID uuid.UUID
 		args = append(args, *branchID)
 	}
 	query += `
-		GROUP BY b.service_id, s.name, s.color
+		GROUP BY b.branch_id, br.name, b.service_id, s.name, s.color
 		ORDER BY count DESC
 		LIMIT ?`
 	args = append(args, limit)

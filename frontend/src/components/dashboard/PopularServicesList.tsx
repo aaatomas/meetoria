@@ -35,9 +35,16 @@ const COLOR_SWATCHES: Record<SchedulerEventColor, string> = {
 interface PopularServicesListProps {
   services: PopularService[];
   currency?: string;
+  showBranch?: boolean;
+  compact?: boolean;
 }
 
-export function PopularServicesList({ services, currency = 'EUR' }: PopularServicesListProps) {
+export function PopularServicesList({
+  services,
+  currency = 'EUR',
+  showBranch = false,
+  compact = false,
+}: PopularServicesListProps) {
   const theme = useTheme();
 
   if (!services.length) {
@@ -51,24 +58,24 @@ export function PopularServicesList({ services, currency = 'EUR' }: PopularServi
   const maxCount = Math.max(...services.map((service) => service.count), 1);
 
   return (
-    <Stack spacing={2}>
+    <Stack spacing={compact ? 1.25 : 2}>
       {services.map((service, index) => {
         const colorKey = SERVICE_EVENT_COLORS[index % SERVICE_EVENT_COLORS.length];
         const barColor = COLOR_SWATCHES[colorKey];
         const share = service.count / maxCount;
 
         return (
-          <Box key={service.service_id}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0.75 }}>
+          <Box key={`${service.branch_id}:${service.service_id}`}>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: compact ? 1 : 1.5, mb: compact ? 0.5 : 0.75 }}>
               <Box
                 sx={{
-                  width: 24,
-                  height: 24,
+                  width: compact ? 20 : 24,
+                  height: compact ? 20 : 24,
                   borderRadius: '50%',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  fontSize: 12,
+                  fontSize: compact ? 10 : 12,
                   fontWeight: 700,
                   flexShrink: 0,
                   bgcolor: alpha(barColor, 0.15),
@@ -77,24 +84,47 @@ export function PopularServicesList({ services, currency = 'EUR' }: PopularServi
               >
                 {index + 1}
               </Box>
-              <Typography variant="body2" fontWeight={600} sx={{ flex: 1, minWidth: 0 }} noWrap>
-                {service.service_name}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0 }}>
-                {service.count}
-              </Typography>
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography variant="body2" fontWeight={600} noWrap sx={{ fontSize: compact ? '0.8125rem' : undefined }}>
+                  {service.service_name}
+                </Typography>
+                {showBranch && service.branch_name && (
+                  <Typography variant="caption" color="text.secondary" noWrap display="block">
+                    {service.branch_name}
+                  </Typography>
+                )}
+              </Box>
               <Typography
-                variant="body2"
-                fontWeight={600}
-                sx={{ flexShrink: 0, minWidth: 72, textAlign: 'right' }}
+                variant={compact ? 'caption' : 'body2'}
+                color="text.secondary"
+                sx={{ flexShrink: 0, textAlign: 'right', lineHeight: 1.3 }}
               >
-                {formatPrice(service.revenue, currency)}
+                {compact ? (
+                  <>
+                    {service.count}
+                    <br />
+                    <Box component="span" fontWeight={600} color="text.primary">
+                      {formatPrice(service.revenue, currency)}
+                    </Box>
+                  </>
+                ) : (
+                  service.count
+                )}
               </Typography>
+              {!compact && (
+                <Typography
+                  variant="body2"
+                  fontWeight={600}
+                  sx={{ flexShrink: 0, minWidth: 72, textAlign: 'right' }}
+                >
+                  {formatPrice(service.revenue, currency)}
+                </Typography>
+              )}
             </Box>
             <Box
               sx={{
-                ml: 4.5,
-                height: 8,
+                ml: compact ? 3.5 : 4.5,
+                height: compact ? 6 : 8,
                 borderRadius: 999,
                 bgcolor: alpha(theme.palette.text.primary, theme.palette.mode === 'dark' ? 0.08 : 0.06),
                 overflow: 'hidden',

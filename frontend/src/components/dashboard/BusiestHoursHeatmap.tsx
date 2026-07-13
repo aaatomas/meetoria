@@ -34,9 +34,10 @@ function cellIntensity(count: number, maxCount: number, isDark: boolean): number
 
 interface BusiestHoursHeatmapProps {
   heatmapData: HeatmapCell[][];
+  compact?: boolean;
 }
 
-export function BusiestHoursHeatmap({ heatmapData }: BusiestHoursHeatmapProps) {
+export function BusiestHoursHeatmap({ heatmapData, compact = false }: BusiestHoursHeatmapProps) {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
 
@@ -58,10 +59,12 @@ export function BusiestHoursHeatmap({ heatmapData }: BusiestHoursHeatmapProps) {
     );
   }
 
+  const labelColWidth = compact ? 28 : LABEL_COL_WIDTH;
+  const slotTicks = compact ? [0, 6] : SLOT_TICKS;
   const emptyBackground = alpha(theme.palette.text.primary, isDark ? 0.06 : 0.04);
   const cellSx = {
     aspectRatio: '1',
-    minHeight: 14,
+    minHeight: compact ? 10 : 14,
     borderRadius: 0.5,
     border: `1px solid ${alpha(theme.palette.divider, 0.6)}`,
   };
@@ -70,9 +73,10 @@ export function BusiestHoursHeatmap({ heatmapData }: BusiestHoursHeatmapProps) {
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: `${LABEL_COL_WIDTH}px repeat(${SLOTS_PER_DAY}, minmax(0, 1fr))`,
-        gap: 0.5,
+        gridTemplateColumns: `${labelColWidth}px repeat(${SLOTS_PER_DAY}, minmax(0, 1fr))`,
+        gap: compact ? 0.25 : 0.5,
         alignItems: 'center',
+        height: '100%',
       }}
     >
       <Box />
@@ -82,9 +86,9 @@ export function BusiestHoursHeatmap({ heatmapData }: BusiestHoursHeatmapProps) {
           variant="caption"
           color="text.secondary"
           sx={{
-            fontSize: 10,
+            fontSize: compact ? 9 : 10,
             textAlign: 'center',
-            visibility: SLOT_TICKS.includes(slot) ? 'visible' : 'hidden',
+            visibility: slotTicks.includes(slot) ? 'visible' : 'hidden',
           }}
         >
           {String(slot * 2).padStart(2, '0')}
@@ -96,7 +100,7 @@ export function BusiestHoursHeatmap({ heatmapData }: BusiestHoursHeatmapProps) {
           <Typography
             variant="caption"
             color="text.secondary"
-            sx={{ fontSize: 11, pr: 0.5, textAlign: 'right' }}
+            sx={{ fontSize: compact ? 10 : 11, pr: 0.5, textAlign: 'right' }}
           >
             {weekdays[weekday]}
           </Typography>

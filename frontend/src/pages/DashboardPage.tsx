@@ -1,6 +1,6 @@
 import { Grid, Typography, Card, CardContent, Box, Skeleton, Alert, Stack } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   api,
   DashboardStats,
@@ -13,6 +13,7 @@ import {
 } from '../api/client';
 import { formatPrice } from '../utils/formatCurrency';
 import dayjs from 'dayjs';
+import { BusiestDaysChart } from '../components/dashboard/BusiestDaysChart';
 import { BusiestHoursHeatmap } from '../components/dashboard/BusiestHoursHeatmap';
 import { PopularServicesList } from '../components/dashboard/PopularServicesList';
 import { StatTrend } from '../components/dashboard/StatTrend';
@@ -52,6 +53,52 @@ function buildScopeBadgeLabel(scope: DashboardScope, branchName?: string) {
     return branchName ?? 'Branch';
   }
   return 'Organization';
+}
+
+const DASHBOARD_CHART_HEIGHT = 300;
+
+const dashboardChartCardSx = {
+  height: '100%',
+  display: 'flex',
+  flexDirection: 'column',
+} as const;
+
+const dashboardChartContentSx = {
+  flex: 1,
+  display: 'flex',
+  flexDirection: 'column',
+  pb: 2,
+} as const;
+
+const dashboardChartBodySx = {
+  flex: 1,
+  minHeight: DASHBOARD_CHART_HEIGHT,
+  display: 'flex',
+  flexDirection: 'column',
+} as const;
+
+function DashboardChartCard({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Card variant="outlined" sx={{ ...dashboardChartCardSx, width: '100%' }}>
+      <CardContent sx={dashboardChartContentSx}>
+        <Typography variant="h6" gutterBottom>{title}</Typography>
+        {subtitle && (
+          <Typography variant="caption" color="text.secondary" display="block" mb={1}>
+            {subtitle}
+          </Typography>
+        )}
+        <Box sx={dashboardChartBodySx}>{children}</Box>
+      </CardContent>
+    </Card>
+  );
 }
 
 export function DashboardPage() {
@@ -126,8 +173,11 @@ export function DashboardPage() {
         {[1, 2, 3, 4].map((i) => (
           <Grid size={{ xs: 12, sm: 6, md: 3 }} key={i}><Skeleton variant="rounded" height={120} /></Grid>
         ))}
-        <Grid size={{ xs: 12, md: 6 }}><Skeleton variant="rounded" height={280} /></Grid>
-        <Grid size={{ xs: 12, md: 6 }}><Skeleton variant="rounded" height={280} /></Grid>
+        {[1, 2, 3].map((i) => (
+          <Grid size={{ xs: 12, md: 4 }} key={i}>
+            <Skeleton variant="rounded" height={DASHBOARD_CHART_HEIGHT + 88} />
+          </Grid>
+        ))}
       </Grid>
     );
   }
@@ -177,25 +227,29 @@ export function DashboardPage() {
           />
         </Grid>
 
-        <Grid size={{ xs: 12, md: 6 }}>
-          <Card variant="outlined" sx={{ height: '100%' }}>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>Popular Services</Typography>
-              <PopularServicesList services={data?.popular_services ?? []} currency={currency} />
-            </CardContent>
-          </Card>
+        <Grid size={{ xs: 12, md: 4 }} sx={{ display: 'flex' }}>
+          <DashboardChartCard title="Popular Services">
+            <Box sx={{ flex: 1, overflow: 'auto', pr: 0.5 }}>
+              <PopularServicesList
+                services={data?.popular_services ?? []}
+                currency={currency}
+                showBranch={effectiveScope === 'organization'}
+                compact
+              />
+            </Box>
+          </DashboardChartCard>
         </Grid>
 
-        <Grid size={{ xs: 12, md: 6 }}>
-          <Card variant="outlined" sx={{ height: '100%' }}>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>Busiest Hours</Typography>
-              <Typography variant="caption" color="text.secondary" display="block" mb={1.5}>
-                Bookings by day and 2-hour slot
-              </Typography>
-              <BusiestHoursHeatmap heatmapData={data?.hourly_heatmap ?? []} />
-            </CardContent>
-          </Card>
+        <Grid size={{ xs: 12, md: 4 }} sx={{ display: 'flex' }}>
+          <DashboardChartCard title="Busiest Days" subtitle="Bookings by day of week">
+            <BusiestDaysChart days={data?.busiest_days ?? []} compact />
+          </DashboardChartCard>
+        </Grid>
+
+        <Grid size={{ xs: 12, md: 4 }} sx={{ display: 'flex' }}>
+          <DashboardChartCard title="Busiest Hours" subtitle="Bookings by day and 2-hour slot">
+            <BusiestHoursHeatmap heatmapData={data?.hourly_heatmap ?? []} compact />
+          </DashboardChartCard>
         </Grid>
       </Grid>
     </Box>

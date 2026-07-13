@@ -1,7 +1,8 @@
 import { RefObject, useLayoutEffect, useRef } from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import { alpha, useTheme } from '@mui/material/styles';
-import { Box, Button, ButtonGroup, Chip, Stack, Typography } from '@mui/material';
+import { Chip, IconButton, Stack, Tooltip } from '@mui/material';
+import { pink } from '@mui/material/colors';
 import { DoneAll, RemoveDone } from '@mui/icons-material';
 
 const RESOURCES_TREE_SELECTOR = '.MuiEventCalendar-resourcesTree';
@@ -25,64 +26,52 @@ function ResourceFilterActions({ onSelectAll, onDeselectAll, stats }: ResourceFi
   const noneSelected = selectedCount === 0;
 
   return (
-    <Box
-      sx={{
-        mx: 1.25,
-        mb: 1.25,
-        p: 1,
-        borderRadius: 2,
-        border: `1px solid ${theme.palette.divider}`,
-        bgcolor: alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.08 : 0.04),
-      }}
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={0.25}
+      component="span"
+      sx={{ ml: 0.75, verticalAlign: 'middle' }}
     >
-      <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1}>
-        <Typography variant="caption" color="text.secondary" fontWeight={600}>
-          Visible on calendar
-        </Typography>
-        <Chip
-          size="small"
-          label={`${selectedCount}/${totalCount}`}
-          color={allSelected ? 'primary' : 'default'}
-          variant={allSelected ? 'filled' : 'outlined'}
-          sx={{ height: 22, fontSize: '0.7rem', fontWeight: 700 }}
-        />
-      </Stack>
-
-      <ButtonGroup
-        fullWidth
-        variant="outlined"
+      <Chip
         size="small"
+        label={`${selectedCount}/${totalCount}`}
         sx={{
-          '& .MuiButton-root': {
-            textTransform: 'none',
-            fontWeight: 600,
-            fontSize: '0.8125rem',
-            py: 0.625,
-            borderColor: theme.palette.divider,
-            bgcolor: theme.palette.background.paper,
-            '&:hover': {
-              bgcolor: alpha(theme.palette.primary.main, 0.08),
-              borderColor: theme.palette.primary.main,
-            },
-          },
+          height: 20,
+          fontSize: '0.65rem',
+          fontWeight: 700,
+          bgcolor: alpha(pink[500], theme.palette.mode === 'dark' ? 0.24 : 0.12),
+          color: theme.palette.mode === 'dark' ? pink[200] : pink[700],
+          '& .MuiChip-label': { px: 0.75 },
         }}
-      >
-        <Button
-          onClick={onSelectAll}
-          disabled={allSelected || totalCount === 0}
-          startIcon={<DoneAll sx={{ fontSize: 16 }} />}
-        >
-          Select all
-        </Button>
-        <Button
-          onClick={onDeselectAll}
-          disabled={noneSelected || totalCount === 0}
-          startIcon={<RemoveDone sx={{ fontSize: 16 }} />}
-        >
-          Clear all
-        </Button>
-      </ButtonGroup>
-    </Box>
+      />
+      <Tooltip title="Select all">
+        <span>
+          <IconButton
+            size="small"
+            onClick={onSelectAll}
+            disabled={allSelected || totalCount === 0}
+            aria-label="Select all employees"
+            sx={{ p: 0.375, color: 'text.secondary' }}
+          >
+            <DoneAll sx={{ fontSize: 16 }} />
+          </IconButton>
+        </span>
+      </Tooltip>
+      <Tooltip title="Clear all">
+        <span>
+          <IconButton
+            size="small"
+            onClick={onDeselectAll}
+            disabled={noneSelected || totalCount === 0}
+            aria-label="Clear all employees"
+            sx={{ p: 0.375, color: 'text.secondary' }}
+          >
+            <RemoveDone sx={{ fontSize: 16 }} />
+          </IconButton>
+        </span>
+      </Tooltip>
+    </Stack>
   );
 }
 
@@ -145,16 +134,21 @@ export function useSchedulerResourceFilterActions(
         return;
       }
 
-      const label = treeRoot.querySelector('.MuiEventCalendar-resourcesTreeLabel');
+      const label = treeRoot.querySelector('.MuiEventCalendar-resourcesTreeLabel') as HTMLElement | null;
       if (!label) {
         return;
       }
 
-      let host = treeRoot.querySelector(`[${RESOURCE_ACTIONS_ATTR}]`) as HTMLElement | null;
+      label.style.display = 'inline-flex';
+      label.style.alignItems = 'center';
+      label.style.flexWrap = 'wrap';
+      label.style.gap = '2px';
+
+      let host = label.querySelector(`[${RESOURCE_ACTIONS_ATTR}]`) as HTMLElement | null;
       if (!host) {
-        host = document.createElement('div');
+        host = document.createElement('span');
         host.setAttribute(RESOURCE_ACTIONS_ATTR, 'true');
-        label.insertAdjacentElement('afterend', host);
+        label.appendChild(host);
       }
 
       renderHost(host);
