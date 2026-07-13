@@ -8,10 +8,8 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-const (
-	ExchangeName = "meetoria.events"
-	ExchangeType = "topic"
-)
+// ExchangeName is the backend outbound exchange.
+const ExchangeName = BackendExchangeName
 
 type Publisher struct {
 	conn    *amqp.Connection
@@ -30,7 +28,7 @@ func NewPublisher(url string) (*Publisher, error) {
 		return nil, fmt.Errorf("open channel: %w", err)
 	}
 
-	if err := ch.ExchangeDeclare(ExchangeName, ExchangeType, true, false, false, false, nil); err != nil {
+	if err := ch.ExchangeDeclare(BackendExchangeName, ExchangeType, true, false, false, false, nil); err != nil {
 		ch.Close()
 		conn.Close()
 		return nil, fmt.Errorf("declare exchange: %w", err)
@@ -40,7 +38,7 @@ func NewPublisher(url string) (*Publisher, error) {
 }
 
 func (p *Publisher) Publish(ctx context.Context, routingKey string, body []byte) error {
-	return p.channel.PublishWithContext(ctx, ExchangeName, routingKey, false, false, amqp.Publishing{
+	return p.channel.PublishWithContext(ctx, BackendExchangeName, routingKey, false, false, amqp.Publishing{
 		ContentType:  "application/json",
 		Body:         body,
 		DeliveryMode: amqp.Persistent,

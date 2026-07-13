@@ -196,6 +196,7 @@ func Setup(deps Dependencies) *gin.Engine {
 		orgRoutes.POST("/bookings/:booking_id/cancel", bookingHandler.Cancel)
 		orgRoutes.POST("/bookings/:booking_id/notifications/sms", bookingHandler.SendSMS)
 		orgRoutes.POST("/bookings/:booking_id/notifications/email", bookingHandler.SendEmail)
+		orgRoutes.GET("/bookings/:booking_id/notifications", bookingHandler.ListNotifications)
 
 		orgRoutes.GET("/analytics/dashboard", analyticsHandler.GetDashboard)
 		orgRoutes.GET("/analytics/employees/:employee_id", analyticsHandler.GetEmployeeAnalytics)

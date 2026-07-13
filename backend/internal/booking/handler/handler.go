@@ -255,6 +255,28 @@ func (h *Handler) SendEmail(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (h *Handler) ListNotifications(c *gin.Context) {
+	orgID, user, err := h.tenantContext(c)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
+	if err := h.orgService.VerifyMembership(c.Request.Context(), orgID, user.ID); err != nil {
+		c.Error(err)
+		return
+	}
+
+	id, _ := uuid.Parse(c.Param("booking_id"))
+	notifications, err := h.bookingService.ListNotifications(c.Request.Context(), orgID, id)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+
+	c.JSON(http.StatusOK, notifications)
+}
+
 func (h *Handler) resolveBranchFilter(c *gin.Context) (*uuid.UUID, error) {
 	if s := c.Query("branch_id"); s != "" {
 		id, err := uuid.Parse(s)

@@ -15,9 +15,14 @@ import (
 )
 
 const (
-	exchangeName = "meetoria.events"
-	queueName    = "sms.notifications"
-	routingKey   = "notification.sms"
+	backendExchangeName = "meetoria-backend"
+	workerExchangeName  = "meetoria-sms-worker"
+	workerQueueName     = "meetoria-sms-worker"
+	inboundRoutingKey     = "notification.sms"
+	processingRoutingKey  = "notification.sms.processing"
+	sentRoutingKey        = "notification.sms.sent"
+	failedRoutingKey      = "notification.sms.failed"
+	exchangeType        = "topic"
 )
 
 type SMSMessage struct {
@@ -35,12 +40,27 @@ type SMSMessage struct {
 	Source    string            `json:"source"`
 }
 
+type notificationResultEvent struct {
+	Event               string    `json:"event"`
+	MessageID           uuid.UUID `json:"message_id"`
+	CorrelationID       uuid.UUID `json:"correlation_id"`
+	Timestamp           time.Time `json:"timestamp"`
+	Source              string    `json:"source"`
+	OrganizationID      uuid.UUID `json:"organization_id"`
+	BookingID           uuid.UUID `json:"booking_id"`
+	Channel             string    `json:"channel"`
+	Status              string    `json:"status"`
+	Provider            string    `json:"provider,omitempty"`
+	ProviderMessageID   string    `json:"provider_message_id,omitempty"`
+	Error               string    `json:"error,omitempty"`
+}
+
 type SMSRecord struct {
 	ID                uuid.UUID `gorm:"type:uuid;primaryKey"`
 	MessageID         uuid.UUID `gorm:"type:uuid;uniqueIndex"`
 	CorrelationID     uuid.UUID `gorm:"type:uuid;index"`
-	OrganizationID    uuid.UUID `gorm:"type:uuid"`
-	BookingID         uuid.UUID `gorm:"type:uuid"`
+	OrganizationID    uuid.UUID `gorm:"type:uuid;index"`
+	BookingID         uuid.UUID `gorm:"type:uuid;index"`
 	RecipientPhone    string
 	Template          string
 	Variables         string `gorm:"type:jsonb"`
@@ -76,33 +96,53 @@ func NewConsumer(rabbitURL string, db *gorm.DB, smsProvider provider.Provider) (
 		return nil, err
 	}
 
-	if err := ch.ExchangeDeclare(exchangeName, "topic", true, false, false, false, nil); err != nil {
-		return nil, err
-	}
-
-	q, err := ch.QueueDeclare(queueName, true, false, false, false, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := ch.QueueBind(q.Name, routingKey, exchangeName, false, nil); err != nil {
+	if err := declareWorkerTopology(ch); err != nil {
+		ch.Close()
+		conn.Close()
 		return nil, err
 	}
 
 	if err := ch.Qos(10, 0, false); err != nil {
+		ch.Close()
+		conn.Close()
 		return nil, err
 	}
 
 	return &Consumer{conn: conn, channel: ch, db: db, provider: smsProvider}, nil
 }
 
+func declareWorkerTopology(ch *amqp.Channel) error {
+	if err := ch.ExchangeDeclare(backendExchangeName, exchangeType, true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declare backend exchange: %w", err)
+	}
+
+	if err := ch.ExchangeDeclare(workerExchangeName, exchangeType, true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declare worker exchange: %w", err)
+	}
+
+	q, err := ch.QueueDeclare(workerQueueName, true, false, false, false, nil)
+	if err != nil {
+		return fmt.Errorf("declare worker queue: %w", err)
+	}
+
+	if err := ch.QueueBind(q.Name, inboundRoutingKey, backendExchangeName, false, nil); err != nil {
+		return fmt.Errorf("bind worker queue: %w", err)
+	}
+
+	return nil
+}
+
 func (c *Consumer) Start(ctx context.Context) error {
-	msgs, err := c.channel.Consume(queueName, "sms-worker", false, false, false, false, nil)
+	msgs, err := c.channel.Consume(workerQueueName, "sms-worker", false, false, false, false, nil)
 	if err != nil {
 		return err
 	}
 
-	slog.Info("sms worker started", "queue", queueName)
+	slog.Info("sms worker started",
+		"queue", workerQueueName,
+		"inbound_exchange", backendExchangeName,
+		"outbound_exchange", workerExchangeName,
+	)
 
 	for {
 		select {
@@ -154,12 +194,17 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) error {
 		return err
 	}
 
+	if err := c.publishStatus(ctx, event, processingRoutingKey, "processing", "", ""); err != nil {
+		return err
+	}
+
 	body := provider.RenderTemplate(event.Template, event.Variables)
 	result, err := c.provider.Send(ctx, event.Recipient.Phone, body)
 	if err != nil {
 		record.Status = "failed"
 		record.RetryCount++
 		c.db.Save(&record)
+		_ = c.publishStatus(ctx, event, failedRoutingKey, "failed", c.provider.Name(), err.Error())
 		return err
 	}
 
@@ -167,7 +212,58 @@ func (c *Consumer) handleMessage(ctx context.Context, msg amqp.Delivery) error {
 	record.Status = "sent"
 	record.ProviderMessageID = result.ProviderMessageID
 	record.SentAt = &now
-	return c.db.WithContext(ctx).Save(&record).Error
+	if err := c.db.WithContext(ctx).Save(&record).Error; err != nil {
+		return err
+	}
+
+	return c.publishStatus(ctx, event, sentRoutingKey, "sent", c.provider.Name(), result.ProviderMessageID)
+}
+
+func (c *Consumer) publishStatus(ctx context.Context, event SMSMessage, routingKey, status, provider, detail string) error {
+	result := notificationResultEvent{
+		Event:          routingKey,
+		MessageID:      event.MessageID,
+		CorrelationID:  event.CorrelationID,
+		Timestamp:      time.Now().UTC(),
+		Source:         "meetoria-sms-worker",
+		OrganizationID: event.OrganizationID,
+		BookingID:      event.BookingID,
+		Channel:        "sms",
+		Status:         status,
+	}
+
+	switch status {
+	case "sent":
+		result.Provider = provider
+		result.ProviderMessageID = detail
+	case "failed":
+		result.Provider = provider
+		result.Error = detail
+	}
+
+	body, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+
+	if err := c.channel.PublishWithContext(ctx, workerExchangeName, routingKey, false, false, amqp.Publishing{
+		ContentType:  "application/json",
+		Body:         body,
+		DeliveryMode: amqp.Persistent,
+		Timestamp:    time.Now().UTC(),
+	}); err != nil {
+		return err
+	}
+
+	slog.Info("sms status published",
+		"exchange", workerExchangeName,
+		"routing_key", routingKey,
+		"status", status,
+		"message_id", event.MessageID,
+		"correlation_id", event.CorrelationID,
+	)
+
+	return nil
 }
 
 func (c *Consumer) Close() {

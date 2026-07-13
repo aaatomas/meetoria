@@ -20,6 +20,7 @@ import (
 	redisclient "github.com/meetoria/meetoria/backend/internal/common/redis"
 	"github.com/meetoria/meetoria/backend/internal/common/rabbitmq"
 	notifservice "github.com/meetoria/meetoria/backend/internal/notification/service"
+	"github.com/meetoria/meetoria/backend/internal/notification"
 	"github.com/meetoria/meetoria/backend/internal/organization"
 	orgrepo "github.com/meetoria/meetoria/backend/internal/organization/repository"
 	"github.com/meetoria/meetoria/backend/internal/schedule"
@@ -40,6 +41,7 @@ type Service interface {
 	GetPublicAvailability(ctx context.Context, orgID uuid.UUID, req booking.PublicAvailabilityRequest, minNoticeMinutes int) ([]booking.PublicTimeSlot, error)
 	SendSMS(ctx context.Context, orgID, id uuid.UUID, correlationID uuid.UUID) error
 	SendEmail(ctx context.Context, orgID, id uuid.UUID, correlationID uuid.UUID) error
+	ListNotifications(ctx context.Context, orgID, id uuid.UUID) ([]notification.Notification, error)
 }
 
 type bookingService struct {
@@ -795,6 +797,13 @@ func (s *bookingService) SendEmail(ctx context.Context, orgID, id uuid.UUID, cor
 		return err
 	}
 	return s.notifService.QueueBookingConfirmationEmail(ctx, orgID, b, correlationID)
+}
+
+func (s *bookingService) ListNotifications(ctx context.Context, orgID, id uuid.UUID) ([]notification.Notification, error) {
+	if _, err := s.GetByID(ctx, orgID, id); err != nil {
+		return nil, err
+	}
+	return s.notifService.ListByBooking(ctx, orgID, id)
 }
 
 func (s *bookingService) publishBookingEvent(ctx context.Context, eventType string, b *booking.Booking, correlationID uuid.UUID) {

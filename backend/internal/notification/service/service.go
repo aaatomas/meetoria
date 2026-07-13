@@ -165,6 +165,8 @@ func (s *notificationService) queueSMS(ctx context.Context, orgID, bookingID uui
 		Variables:      variables,
 	}
 
+	n.MessageID = &event.MessageID
+
 	body, err := events.MarshalEvent(event)
 	if err != nil {
 		return err
@@ -200,6 +202,8 @@ func (s *notificationService) queueEmail(ctx context.Context, orgID, bookingID u
 		Variables:      variables,
 	}
 
+	n.MessageID = &event.MessageID
+
 	body, err := events.MarshalEvent(event)
 	if err != nil {
 		return err
@@ -210,8 +214,6 @@ func (s *notificationService) queueEmail(ctx context.Context, orgID, bookingID u
 	}
 
 	n.Status = notification.StatusQueued
-	now := time.Now().UTC()
-	n.SentAt = &now
 	return s.repo.Update(ctx, n)
 }
 

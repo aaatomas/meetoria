@@ -12,6 +12,8 @@ import {
   Menu,
   MenuItem,
   Stack,
+  Tab,
+  Tabs,
   TextField,
   Typography,
 } from '@mui/material';
@@ -20,14 +22,15 @@ import CheckIcon from '@mui/icons-material/Check';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import SmsOutlinedIcon from '@mui/icons-material/SmsOutlined';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import dayjs, { Dayjs } from 'dayjs';
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import type { Booking, Customer, Employee, Service } from '../../api/client';
-import { getApiErrorMessage, cancelBooking, sendBookingEmail, sendBookingSms, updateBookingStatus } from '../../api/client';
+import { getApiErrorMessage, cancelBooking, fetchBookingNotifications, sendBookingEmail, sendBookingSms, updateBookingStatus } from '../../api/client';
+import { BookingNotificationHistory } from './BookingNotificationHistory';
 import {
   BOOKING_STATUS_CHANGE_OPTIONS,
   canChangeBookingStatus,
@@ -100,6 +103,14 @@ function isBookingLocked(status: string): boolean {
   return status === 'completed' || status === 'no_show' || status === 'cancelled';
 }
 
+function TabPanel({ children, value, index }: { children: ReactNode; value: number; index: number }) {
+  if (value !== index) {
+    return null;
+  }
+
+  return <Box sx={{ pt: 2 }}>{children}</Box>;
+}
+
 export function BookingEventDialog({
   orgId,
   currency,
@@ -114,6 +125,7 @@ export function BookingEventDialog({
   onSave,
 }: BookingEventDialogProps) {
   const queryClient = useQueryClient();
+  const [tab, setTab] = useState(0);
   const [currentStatus, setCurrentStatus] = useState('');
   const locked = isBookingLocked(currentStatus);
   const statusEditable = canChangeBookingStatus(currentStatus);
@@ -160,6 +172,7 @@ export function BookingEventDialog({
     mutationFn: () => sendBookingSms(orgId, booking!.id),
     onSuccess: () => {
       setNotificationMessage({ severity: 'success', text: 'SMS queued for delivery.' });
+      queryClient.invalidateQueries({ queryKey: ['booking-notifications', orgId, booking!.id] });
     },
     onError: (error) => {
       setNotificationMessage({ severity: 'error', text: getApiErrorMessage(error) });
@@ -170,6 +183,7 @@ export function BookingEventDialog({
     mutationFn: () => sendBookingEmail(orgId, booking!.id),
     onSuccess: () => {
       setNotificationMessage({ severity: 'success', text: 'Email queued for delivery.' });
+      queryClient.invalidateQueries({ queryKey: ['booking-notifications', orgId, booking!.id] });
     },
     onError: (error) => {
       setNotificationMessage({ severity: 'error', text: getApiErrorMessage(error) });
@@ -216,11 +230,19 @@ export function BookingEventDialog({
       : null;
   const statusBadgeColors = getBookingStatusBadgeColors(currentStatus || booking?.status || 'pending');
 
+  const notificationsQuery = useQuery({
+    queryKey: ['booking-notifications', orgId, booking?.id],
+    queryFn: () => fetchBookingNotifications(orgId, booking!.id),
+    enabled: open && !!booking,
+    refetchInterval: tab === 1 && open ? 3000 : false,
+  });
+
   const initializedBookingIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!open) {
       initializedBookingIdRef.current = null;
+      setTab(0);
       setNotificationMessage(null);
       setCustomerMenuAnchor(null);
       setStatusMenuAnchor(null);
@@ -413,7 +435,13 @@ export function BookingEventDialog({
       </DialogTitle>
       <Box component="form" onSubmit={onSubmit}>
         <DialogContent>
-          <Stack spacing={2} mt={0.5}>
+          <Tabs value={tab} onChange={(_, value) => setTab(value)}>
+            <Tab label="Details" />
+            <Tab label="Notifications" />
+          </Tabs>
+
+          <TabPanel value={tab} index={0}>
+          <Stack spacing={2}>
             {errorMessage && <Alert severity="error">{errorMessage}</Alert>}
             {notificationMessage && (
               <Alert severity={notificationMessage.severity}>{notificationMessage.text}</Alert>
@@ -540,10 +568,19 @@ export function BookingEventDialog({
               )}
             />
           </Stack>
+          </TabPanel>
+
+          <TabPanel value={tab} index={1}>
+            <BookingNotificationHistory
+              notifications={notificationsQuery.data ?? []}
+              isLoading={notificationsQuery.isLoading}
+              errorMessage={notificationsQuery.error ? getApiErrorMessage(notificationsQuery.error) : null}
+            />
+          </TabPanel>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2, gap: 1 }}>
           <Button onClick={onClose}>Close</Button>
-          {!locked && (
+          {tab === 0 && !locked && (
             <Button type="submit" variant="contained" disabled={isSaving || updateStatusMutation.isPending || cancelBookingMutation.isPending}>
               {isSaving ? 'Saving...' : 'Save'}
             </Button>

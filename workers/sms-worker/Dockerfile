@@ -7,5 +7,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /sms-worker ./cmd/work
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
+WORKDIR /app
 COPY --from=builder /sms-worker .
+COPY --from=builder /app/migrations ./migrations
 CMD ["./sms-worker"]

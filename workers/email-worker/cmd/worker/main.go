@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/meetoria/meetoria/workers/email-worker/internal/consumer"
+	"github.com/meetoria/meetoria/workers/email-worker/internal/database"
 	"github.com/meetoria/meetoria/workers/email-worker/internal/provider"
 )
 
@@ -26,6 +27,10 @@ func main() {
 	db, err := gorm.Open(postgres.Open(dbURL), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("database connection failed: %v", err)
+	}
+
+	if err := database.Migrate(db, getEnv("MIGRATIONS_DIR", "migrations")); err != nil {
+		log.Fatalf("database migration failed: %v", err)
 	}
 
 	emailProvider := provider.NewProvider(providerType)

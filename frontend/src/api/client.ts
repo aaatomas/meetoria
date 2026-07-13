@@ -376,6 +376,26 @@ export async function sendBookingEmail(orgId: string, bookingId: string): Promis
   await api.post(`/organizations/${orgId}/bookings/${bookingId}/notifications/email`);
 }
 
+export interface Notification {
+  id: string;
+  organization_id: string;
+  booking_id?: string;
+  channel: 'sms' | 'email';
+  template: string;
+  recipient: string;
+  status: 'created' | 'queued' | 'sent' | 'delivered' | 'failed';
+  scheduled_at?: string;
+  sent_at?: string;
+  delivered_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchBookingNotifications(orgId: string, bookingId: string): Promise<Notification[]> {
+  const { data } = await api.get<Notification[]>(`/organizations/${orgId}/bookings/${bookingId}/notifications`);
+  return data;
+}
+
 export async function cancelBooking(orgId: string, bookingId: string, reason: string): Promise<Booking> {
   const { data } = await api.post<Booking>(`/organizations/${orgId}/bookings/${bookingId}/cancel`, { reason });
   return data;

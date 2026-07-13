@@ -13,6 +13,7 @@ type Repository interface {
 	Create(ctx context.Context, n *notification.Notification) error
 	Update(ctx context.Context, n *notification.Notification) error
 	GetByID(ctx context.Context, orgID, id uuid.UUID) (*notification.Notification, error)
+	GetByMessageID(ctx context.Context, orgID, messageID uuid.UUID) (*notification.Notification, error)
 	ListByBooking(ctx context.Context, orgID, bookingID uuid.UUID) ([]notification.Notification, error)
 }
 
@@ -36,6 +37,17 @@ func (r *gormRepository) GetByID(ctx context.Context, orgID, id uuid.UUID) (*not
 	var n notification.Notification
 	err := r.db.WithContext(ctx).
 		Where("organization_id = ? AND id = ?", orgID, id).
+		First(&n).Error
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
+}
+
+func (r *gormRepository) GetByMessageID(ctx context.Context, orgID, messageID uuid.UUID) (*notification.Notification, error) {
+	var n notification.Notification
+	err := r.db.WithContext(ctx).
+		Where("organization_id = ? AND message_id = ?", orgID, messageID).
 		First(&n).Error
 	if err != nil {
 		return nil, err

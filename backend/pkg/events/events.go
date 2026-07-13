@@ -12,8 +12,14 @@ const (
 	EventBookingCreated   = "booking.created"
 	EventBookingUpdated   = "booking.updated"
 	EventBookingCancelled = "booking.cancelled"
-	EventNotificationSMS  = "notification.sms"
-	EventNotificationEmail = "notification.email"
+	EventNotificationSMS         = "notification.sms"
+	EventNotificationEmail       = "notification.email"
+	EventNotificationSMSSent       = "notification.sms.sent"
+	EventNotificationSMSFailed     = "notification.sms.failed"
+	EventNotificationSMSProcessing = "notification.sms.processing"
+	EventNotificationEmailSent       = "notification.email.sent"
+	EventNotificationEmailFailed     = "notification.email.failed"
+	EventNotificationEmailProcessing = "notification.email.processing"
 	EventPaymentCompleted = "payment.completed"
 	EventCalendarSync     = "calendar.sync"
 )
@@ -72,6 +78,17 @@ type EmailNotificationEvent struct {
 
 type EmailRecipient struct {
 	Email string `json:"email"`
+}
+
+type NotificationResultEvent struct {
+	BaseEvent
+	OrganizationID      uuid.UUID `json:"organization_id"`
+	BookingID           uuid.UUID `json:"booking_id"`
+	Channel             string    `json:"channel"`
+	Status              string    `json:"status"`
+	Provider            string    `json:"provider,omitempty"`
+	ProviderMessageID   string    `json:"provider_message_id,omitempty"`
+	Error               string    `json:"error,omitempty"`
 }
 
 func MarshalEvent(v any) ([]byte, error) {

@@ -25,6 +25,7 @@ import (
 	"github.com/meetoria/meetoria/backend/internal/common/rabbitmq"
 	redisclient "github.com/meetoria/meetoria/backend/internal/common/redis"
 	"github.com/meetoria/meetoria/backend/internal/common/router"
+	notifconsumer "github.com/meetoria/meetoria/backend/internal/notification/consumer"
 )
 
 func main() {
@@ -52,6 +53,21 @@ func main() {
 	}
 	defer publisher.Close()
 
+	rmqConsumer, err := rabbitmq.NewConsumer(cfg.RabbitMQURL, notifconsumer.NewHandler(db).Handle)
+	if err != nil {
+		log.Fatalf("failed to start rabbitmq consumer: %v", err)
+	}
+	defer rmqConsumer.Close()
+
+	consumerCtx, consumerCancel := context.WithCancel(context.Background())
+	defer consumerCancel()
+
+	go func() {
+		if err := rmqConsumer.Start(consumerCtx); err != nil && consumerCtx.Err() == nil {
+			log.Fatalf("rabbitmq consumer error: %v", err)
+		}
+	}()
+
 	r := router.Setup(router.Dependencies{
 		Config:    cfg,
 		DB:        db,
@@ -76,6 +92,7 @@ func main() {
 	<-quit
 
 	logger.Default().Info("shutting down server")
+	consumerCancel()
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout())
 	defer cancel()
 
