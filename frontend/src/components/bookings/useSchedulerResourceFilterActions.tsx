@@ -1,9 +1,8 @@
 import { RefObject, useLayoutEffect, useRef } from 'react';
 import { createRoot, Root } from 'react-dom/client';
-import { alpha, useTheme } from '@mui/material/styles';
-import { Chip, IconButton, Stack, Tooltip } from '@mui/material';
-import { pink } from '@mui/material/colors';
+import { Chip, IconButton, Stack, ThemeProvider, Tooltip } from '@mui/material';
 import { DoneAll, RemoveDone } from '@mui/icons-material';
+import { theme } from '../../theme';
 
 const RESOURCES_TREE_SELECTOR = '.MuiEventCalendar-resourcesTree';
 const RESOURCE_ACTIONS_ATTR = 'data-meetoria-resource-actions';
@@ -20,7 +19,6 @@ interface ResourceFilterActionsProps {
 }
 
 function ResourceFilterActions({ onSelectAll, onDeselectAll, stats }: ResourceFilterActionsProps) {
-  const theme = useTheme();
   const { selectedCount, totalCount } = stats;
   const allSelected = totalCount > 0 && selectedCount === totalCount;
   const noneSelected = selectedCount === 0;
@@ -35,13 +33,13 @@ function ResourceFilterActions({ onSelectAll, onDeselectAll, stats }: ResourceFi
     >
       <Chip
         size="small"
+        color="primary"
+        variant="filled"
         label={`${selectedCount}/${totalCount}`}
         sx={{
           height: 20,
           fontSize: '0.65rem',
           fontWeight: 700,
-          bgcolor: alpha(pink[500], theme.palette.mode === 'dark' ? 0.24 : 0.12),
-          color: theme.palette.mode === 'dark' ? pink[200] : pink[700],
           '& .MuiChip-label': { px: 0.75 },
         }}
       />
@@ -72,6 +70,17 @@ function ResourceFilterActions({ onSelectAll, onDeselectAll, stats }: ResourceFi
         </span>
       </Tooltip>
     </Stack>
+  );
+}
+
+function renderResourceFilterActions(
+  root: Root,
+  props: ResourceFilterActionsProps,
+) {
+  root.render(
+    <ThemeProvider theme={theme}>
+      <ResourceFilterActions {...props} />
+    </ThemeProvider>,
   );
 }
 
@@ -115,13 +124,11 @@ export function useSchedulerResourceFilterActions(
         hostsRef.current.add(host);
       }
 
-      root.render(
-        <ResourceFilterActions
-          onSelectAll={() => onSelectAllRef.current()}
-          onDeselectAll={() => onDeselectAllRef.current()}
-          stats={statsRef.current}
-        />,
-      );
+      renderResourceFilterActions(root, {
+        onSelectAll: () => onSelectAllRef.current(),
+        onDeselectAll: () => onDeselectAllRef.current(),
+        stats: statsRef.current,
+      });
     };
 
     const decorateFilter = () => {
@@ -171,13 +178,12 @@ export function useSchedulerResourceFilterActions(
   useLayoutEffect(() => {
     hostsRef.current.forEach((host) => {
       const root = rootsRef.current.get(host);
-      root?.render(
-        <ResourceFilterActions
-          onSelectAll={() => onSelectAllRef.current()}
-          onDeselectAll={() => onDeselectAllRef.current()}
-          stats={statsRef.current}
-        />,
-      );
+      if (!root) return;
+      renderResourceFilterActions(root, {
+        onSelectAll: () => onSelectAllRef.current(),
+        onDeselectAll: () => onDeselectAllRef.current(),
+        stats: statsRef.current,
+      });
     });
   }, [stats.selectedCount, stats.totalCount]);
 }
